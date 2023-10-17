@@ -1,7 +1,6 @@
 import netmiko
 import credentials  # This is a custom python file which has a dictionary of device with jump-host details and necessary credentials
 import time
-import sys
 
 device = credentials.device
 # device = {
@@ -34,7 +33,7 @@ def device_a_check(device_ip):
                 long_ping_res = long_ping[long_ping.find('ping statistics') + 19:]
                 loss_count = long_ping_res[long_ping_res.find('received,') + 10:long_ping_res.find('packet loss') - 2]
                 repeater = True
-                print(f"Pinging to {device_ip} successful!")
+                print(f"Pinging to {device_ip} unsuccessful!")
                 if int(loss_count) <= 0:
                     return {True: [int(loss_count)]}
                 else:
@@ -43,7 +42,7 @@ def device_a_check(device_ip):
             else:
                 ping_info = ping_result[ping_result.find('ping statistics') + 19:]  # 19 is so that the slicing will start from the next line.
                 loss_count = ping_info[ping_info.find('received,') + 10:ping_info.find('packet loss') - 2]
-                print(f"Pinging to {device_ip} unsuccessful!")
+                print(f"Pinging to {device_ip} successful!")
                 repeat_counter -= 1
                 if int(loss_count) <= 0:
                     return {True: [int(loss_count)]}
@@ -56,7 +55,7 @@ def device_a_check(device_ip):
 
 
 # Gathering device details
-def exec_command(ip_address):
+def exec_command(ip_address, commands):
     try:
         flag = False
         while not flag:
@@ -102,33 +101,44 @@ def exec_command(ip_address):
         print(f'Error occurred!\n{e}')
 
 
-cmd_input, invalid_commands, commands, ip_addresses, list_of_healthy_ip, list_of_unhealthy_ip = [], [], [], [], [], []
-print("Enter a list of commands to be executed (hit enter after each commands), hit enter key after final command and press CTRL + D (CTRL + Z and enter key) to finish your input.\n[Only show commands]")
-# For VS Code, give CTRL + Z and then hit entre.
-for item in sys.stdin.read().strip().split('\n'):
-    cmd_input.append(item)
-for item in cmd_input:
-    if not item.startswith("show"):
-        invalid_commands.append(item)
-    else:
-        commands.append(item)
-print(f"The following commands are invalid and will not be executed: {invalid_commands}")
-print(f"Executing the following commands: {commands}")
-# List of commands to be executed on the switch/cisco device.
+def main():
+    cmd_input, invalid_commands, commands, ip_addresses, list_of_healthy_ip, list_of_unhealthy_ip = [], [], [], [], [], []
+    print("Enter a list of commands to be executed (hit enter after each commands), hit enter key after final command and press CTRL + D (CTRL + Z and enter key) to finish your input.\n[Only show commands]")
+    # For VS Code, give CTRL + Z and then hit entre.
+    var = input()
+    while var != '':
+        cmd_input.append(var)
+        var = input()
 
-print("Enter a list of IPs, hit enter key after final command and press CTRL + D (CTRL + Z and enter key) to finish your input.")
-for item in sys.stdin.read().strip().split('\n'):
-    ip_addresses.append(item)
+    for item in cmd_input:
+        if not item.startswith("show"):
+            invalid_commands.append(item)
+        else:
+            commands.append(item)
+    if len(invalid_commands) != 0:
+        print(f"The following commands are invalid and will not be executed: {invalid_commands}")
+    print(f"Executing the following commands: {commands}")
 
-for item in ip_addresses:
-    boole = device_a_check(item)
-    if True in boole:
-        list_of_healthy_ip.append(item)
-    else:
-        list_of_unhealthy_ip.append(item)
+    # List of commands to be executed on the switch/cisco device.
+    print("Enter a list of IPs, hit enter key after final command and press CTRL + D (CTRL + Z and enter key) to finish your input.")
 
-if list_of_unhealthy_ip:
-    print(f'These IP are unreachable:\n{list_of_unhealthy_ip}')
+    ip_input = input()
+    while ip_input != '':
+        ip_addresses.append(ip_input)
+        ip_input = input()
 
-for item in list_of_healthy_ip:
-    exec_command(item)
+    for item in ip_addresses:
+        boole = device_a_check(item)
+        if True in boole:
+            list_of_healthy_ip.append(item)
+        else:
+            list_of_unhealthy_ip.append(item)
+
+    if list_of_unhealthy_ip:
+        print(f'These IP are unreachable:\n{list_of_unhealthy_ip}')
+
+    for item in list_of_healthy_ip:
+        exec_command(item, commands)
+
+
+main()
