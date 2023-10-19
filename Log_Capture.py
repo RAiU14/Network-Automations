@@ -103,8 +103,7 @@ def exec_command(ip_address, commands):
 
 def main():
     cmd_input, invalid_commands, commands, ip_addresses, list_of_healthy_ip, list_of_unhealthy_ip = [], [], [], [], [], []
-    print("Enter a list of commands to be executed (hit enter after each commands), hit enter key after final command and press CTRL + D (CTRL + Z and enter key) to finish your input.\n[Only show commands]")
-    # For VS Code, give CTRL + Z and then hit entre.
+    print("Enter a list of IPs, hit enter key twice after final command to finish your input.\n[Only show commands]")
     var = input()
     while var != '':
         cmd_input.append(var)
@@ -120,25 +119,34 @@ def main():
     print(f"Executing the following commands: {commands}")
 
     # List of commands to be executed on the switch/cisco device.
-    print("Enter a list of IPs, hit enter key after final command and press CTRL + D (CTRL + Z and enter key) to finish your input.")
+    print("Enter a list of commands, hit enter key twice after final command to finish your input.")
 
     ip_input = input()
     while ip_input != '':
         ip_addresses.append(ip_input)
         ip_input = input()
 
-    for item in ip_addresses:
-        boole = device_a_check(item)
-        if True in boole:
-            list_of_healthy_ip.append(item)
+    print("Do you want to perform ping test for the given IPs ? [Yes/No]")
+    response = input().lower()
+    while response is not ["yes" , "y" , "no" , "n"]:
+        if response in ["yes" , "y"]:
+            for item in ip_addresses:
+                boole = device_a_check(item)
+                if True in boole:
+                    list_of_healthy_ip.append(item)
+                else:
+                    list_of_unhealthy_ip.append(item)
+
+            if list_of_unhealthy_ip:
+                print(f'These IP are unreachable:\n{list_of_unhealthy_ip}')
+
+        elif response in ["no" , "n"]:
+            for item in ip_addresses:
+                exec_command(item, commands)
+
         else:
-            list_of_unhealthy_ip.append(item)
+            print("Please enter a valid choice from the given option which is either 'yes' or 'no ")
 
-    if list_of_unhealthy_ip:
-        print(f'These IP are unreachable:\n{list_of_unhealthy_ip}')
-
-    for item in list_of_healthy_ip:
-        exec_command(item, commands)
-
+        response = input().lower()
 
 main()
