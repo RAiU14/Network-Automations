@@ -1,17 +1,12 @@
 import netmiko
-import credentials  # This is a custom python file which has a dictionary of device with jump-host details and necessary credentials
+import traceback
 import time
+import credentials  # This is a custom python file which has a dictionary of device with jump-host details and necessary credentials [Can be a JSON]
+import Ping_Checks
+from Connection import net_connect
 
-device = credentials.device
-# device = {
-#     'device_type': '',
-#     'ip': '',  # Jump-host IP Address
-#     'username': '',
-#     'password': '',
-#     'port': 22
-# }
+
 tacas = credentials.Credentials
-net_connect = netmiko.ConnectHandler(**device)  # Connecting to the Jump-host
 
 
 # To save the output in the file
@@ -20,85 +15,64 @@ def save_data(filename, output):
         f.write(output)
 
 
-# To check if the IP Address of the given device is alive
-def device_a_check(device_ip):
-    print(f"Pinging {device_ip}")
-    repeater, repeat_counter, packet_loss, long_ping_packet_res, e_msg = False, 2, "0", "0", None
-    try:
-        while not repeater:
-            ping_result = net_connect.send_command_timing(command_string=f"ping -c 5 {device_ip}", read_timeout=120.0, last_read=2.0)
-            if 'ping statistics' not in ping_result:
-                time.sleep(15)
-                long_ping = net_connect.read_channel_timing(max_loops=10, last_read=10, read_timeout=120)
-                long_ping_res = long_ping[long_ping.find('ping statistics') + 19:]
-                loss_count = long_ping_res[long_ping_res.find('received,') + 10:long_ping_res.find('packet loss') - 2]
-                repeater = True
-                print(f"Pinging to {device_ip} unsuccessful!")
-                if int(loss_count) <= 0:
-                    return {True: [int(loss_count)]}
-                else:
-                    return {False: [int(loss_count)]}
-                # Sometimes there will be a delay in ping start/response. Maybe the packet loss is less than 100%.
-            else:
-                ping_info = ping_result[ping_result.find('ping statistics') + 19:]  # 19 is so that the slicing will start from the next line.
-                loss_count = ping_info[ping_info.find('received,') + 10:ping_info.find('packet loss') - 2]
-                print(f"Pinging to {device_ip} successful!")
-                repeat_counter -= 1
-                if int(loss_count) <= 0:
-                    return {True: [int(loss_count)]}
-                else:
-                    return {False: [int(loss_count)]}
-
-    except Exception as e:
-        print(f"Error! {e}")
-        return {False: [int(packet_loss)]}
-
-
 # Gathering device details
 def exec_command(ip_address, commands):
-    try:
-        flag = False
-        while not flag:
-            net_connect.write_channel(f"ssh -l {tacas['TACAS Username']} {ip_address}\n")  # Logging into the switch
-            output = net_connect.read_channel_timing(read_timeout=10.0, max_loops=2, last_read=2.0)
-            # Logging into a device for the first time.
-            if 'RSA key' in output:
-                net_connect.write_channel("yes\n")  # Saving new RSA Key
-                new_output = net_connect.read_channel_timing(read_timeout=10.0, max_loops=2, last_read=2.0)
-                if 'password' in new_output:
-                    net_connect.write_channel(f"{tacas['TACAS Password']}\n")
-                    flag = True
+    counter = 1
+    while counter < 11:  # Max retries for one IP to retry log capture.
+        try:
+            flag = False
+            while not flag:
+                net_connect.write_channel(f"ssh -l {tacas['TACAS Username']} {ip_address}\n")  # Logging into the switch
+                output = net_connect.read_channel_timing(read_timeout=1500.0, max_loops=3, last_read=2.0)
+                # Logging into a device for the first time.
+                if 'RSA key' in output:
+                    net_connect.write_channel("yes\n")  # Saving new RSA Key
+                    new_output = net_connect.read_channel_timing(read_timeout=1500.0, max_loops=3, last_read=2.0)
+                    if 'password' in new_output:
+                        net_connect.write_channel(f"{tacas['TACAS Password']}\n")
+                        flag = True
 
-            elif 'password' in output:  # Checking if the string is present in the output displayed
-                net_connect.write_channel(f"{tacas['TACAS Password']}\n")  # Entering password
-                if 'password' in net_connect.read_channel_timing(read_timeout=10.0, max_loops=2, last_read=2.0):  # I did not check this
-                    net_connect.disconnect()  # Disconnecting due to wrong password entry
-                    print(f'Error occurred while trying to log into device, wrong credentials entered for device with IP Address {ip_address}!')
+                elif 'password' in output:  # Checking if the string is present in the output displayed
+                    net_connect.write_channel(f"{tacas['TACAS Password']}\n")  # Entering password
+                    if 'password' in net_connect.read_channel_timing(read_timeout=1500.0, max_loops=3, last_read=2.0):  # I did not check this
+                        net_connect.disconnect()  # Disconnecting due to wrong password entry
+                        print(f'Error occurred while trying to log into device, wrong credentials entered for device with IP Address {ip_address}!')
+                        flag = False
+                        counter += 1
+                    else:
+                        flag = True
+
+                elif 'NASTY!' in output:
+                    # This is such that, if the RSA key of that device or from the current PC is changed, then it has to be regenerated.
+                    net_connect.write_channel(f'ssh-keygen - R {ip_address}\n')
+                    counter += 1
                     flag = False
+
                 else:
-                    flag = True
+                    print(f'Unknown occurred while trying to log into device {ip_address}!')
+                    net_connect.write_channel("\x03\n\x03")
+                    print(traceback.format_exc())
+                    time.sleep(2)
+                    flag = False
+                    counter += 1
 
-            elif 'NASTY!' in output:
-                # This is such that, if the RSA key of that device or from the current PC is changed, then it has to be regenerated.
-                net_connect.write_channel(f'ssh-keygen - R {ip_address}\n')
-                flag = False
+            netmiko.redispatch(net_connect, device_type='cisco_ios')  # Necessary to communicate with Cisco IOS devices.
+            output = net_connect.send_multiline(commands)
+            switch_hostname = str(net_connect.find_prompt())[:-1]  # Obtaining the device hostname.
+            net_connect.write_channel('logout\n')
+            save_data(switch_hostname, output)
+            print(f'Logs collected for - {switch_hostname}')
+            time.sleep(2)
+            return
 
-            else:
-                print(f'Unknown occurred while trying to log into device {ip_address}!')
-                net_connect.write_channel("\x03")
-                time.sleep(2)
-                flag = True
+        except Exception as e:
+            print(f'Error occurred!\n{e}')
+            print(traceback.format_exc())
 
-        netmiko.redispatch(net_connect, device_type='cisco_ios')  # Necessary to communicate with Cisco IOS devices.
-        output = net_connect.send_multiline(commands)
-        switch_hostname = str(net_connect.find_prompt())[:-1]  # Obtaining the device hostname.
-        net_connect.write_channel('logout\n')
-        save_data(switch_hostname, output)
-        print(f'Logs collected for - {switch_hostname}')
-        time.sleep(2)
+        counter += 1
 
-    except Exception as e:
-        print(f'Error occurred!\n{e}')
+    print(f"Gathering log for {ip_address} unsuccessful after {counter} attempts, proceeding further...\n")
+    return
 
 
 def main():
@@ -107,8 +81,7 @@ def main():
     var = input()
     while var != '':
         cmd_input.append(var)
-        var = input()
-
+        var = input().lower()
     for item in cmd_input:
         if not item.startswith("show"):
             invalid_commands.append(item)
@@ -120,18 +93,19 @@ def main():
 
     # List of commands to be executed on the switch/cisco device.
     print("Enter a list of commands, hit enter key twice after final command to finish your input.")
-
     ip_input = input()
     while ip_input != '':
         ip_addresses.append(ip_input)
         ip_input = input()
 
-    print("Do you want to perform ping test for the given IPs ? [Yes/No]")
+    # Menu-driven only to ping if necessary.
+    print("Do you want to perform ping test for the given IPs? [Yes/y/No/n]")
     response = input().lower()
-    while response is not ["yes" , "y" , "no" , "n"]:
-        if response in ["yes" , "y"]:
+    while response is not ["yes", "y", "no", "n"]:
+        if response in ["yes", "y"]:
+            print(f"Pinging {len(ip_addresses)} devices!\n")
             for item in ip_addresses:
-                boole = device_a_check(item)
+                boole = Ping_Checks.ping_test(item)
                 if True in boole:
                     list_of_healthy_ip.append(item)
                 else:
@@ -140,13 +114,16 @@ def main():
             if list_of_unhealthy_ip:
                 print(f'These IP are unreachable:\n{list_of_unhealthy_ip}')
 
-        elif response in ["no" , "n"]:
+        elif response in ["no", "n"]:
+            counter = 1
             for item in ip_addresses:
                 exec_command(item, commands)
-
+                print(f"[{counter}/{len(ip_addresses)}]")
+                counter += 1
         else:
-            print("Please enter a valid choice from the given option which is either 'yes' or 'no ")
-
+            print("Please enter a valid choice from the given option which is either 'yes' or 'no'.")
         response = input().lower()
 
-main()
+
+if __name__ == '__main__':
+    main()
