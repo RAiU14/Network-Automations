@@ -24,8 +24,7 @@ def exec_command(ip_address, commands):
             while not flag:
                 net_connect.write_channel(f"ssh -l {tacas['TACAS Username']} {ip_address}\n")  # Logging into the switch
                 output = net_connect.read_channel_timing(read_timeout=1500.0, max_loops=3, last_read=2.0)
-                # Logging into a device for the first time.
-                if 'RSA key' in output:
+                if 'RSA key' in output:  # Logging into a device for the first time.
                     net_connect.write_channel("yes\n")  # Saving new RSA Key
                     new_output = net_connect.read_channel_timing(read_timeout=1500.0, max_loops=3, last_read=2.0)
                     if 'password' in new_output:
@@ -77,7 +76,7 @@ def exec_command(ip_address, commands):
 
 def main():
     cmd_input, invalid_commands, commands, ip_addresses, list_of_healthy_ip, list_of_unhealthy_ip = [], [], [], [], [], []
-    print("Enter a list of IPs, hit enter key twice after final command to finish your input.\n[Only show commands]")
+    print("Enter a list of show commands, hit enter key twice after final command to finish your input.\n[Only show commands]")
     var = input()
     while var != '':
         cmd_input.append(var)
@@ -92,7 +91,7 @@ def main():
     print(f"Executing the following commands: {commands}")
 
     # List of commands to be executed on the switch/cisco device.
-    print("Enter a list of commands, hit enter key twice after final command to finish your input.")
+    print("Enter a list of IPs, hit enter key twice after final command to finish your input.")
     ip_input = input()
     while ip_input != '':
         ip_addresses.append(ip_input)
