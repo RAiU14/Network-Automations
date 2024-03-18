@@ -2,7 +2,7 @@ import bs4
 import re
 import requests
 
-# Example Device - AIR-AP2802I-FBULK, AIR-AP1800I-Z-K9
+# Example Device - AIR-AP2802I-FBULK
 
 cisco_url = "https://www.cisco.com"
 
