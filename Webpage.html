@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Dashboard & Command Runner</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: url('https://blog.koorsen.com/hubfs/Protect%20Computer%20Server%20Room.jpg') no-repeat center center fixed;
+            background-size: cover;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+        .container, .command-runner, .new-client {
+            position: fixed;
+            background: rgba(255,255,255,0.8);
+            padding: 35px;
+            border-radius: 15px;
+            margin: 10px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            display: none; /* Adjusted for specific sections */
+        }
+        .show {
+            display: block; /* Show when active */
+        }
+        input, button, select, textarea {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+        button {
+            cursor: pointer;
+            background-color: #248BBD;
+            color: white;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #207FAD;
+        }
+        .settings-icon {
+            cursor: pointer;
+            position: absolute;
+            top: 1px;
+            right: 10px;
+            font-size: 28px;
+            padding: 5px;
+        }
+        .settings-content {
+            display: none;
+            position: absolute;
+            right: 0;
+            background: rgba(255,255,255,0.8);
+            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+            padding: 25px 35px;
+            border-radius: 15px;
+            z-index: 1;
+        }
+        .command-runner textarea {
+            height: 100px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="addClient" class="new-client">
+    <input type="text" id="clientName" placeholder="Enter client name">
+    <input type="text" id="userId" placeholder="Enter user id">
+    <input type="password" id="password" placeholder="Enter password">
+    <button onclick="logClientDetails()">Save Details</button>
+    <button onclick="backToSelection()">Back to Client Selection</button>
+</div>
+
+<div id="clientSelection" class="container show">
+    <input list="clients" id="clientInput" placeholder="Enter client name">
+    <datalist id="clients">
+        <option value="DS Smith">
+        <option value="Suncorp">
+        <!-- Add more options as necessary -->
+    </datalist>
+    <button onclick="showCommandRunner()">Go to Command Runner</button>
+    <div class="settings-icon" onclick="toggleSettings()">⚙</div>
+    <div id="settings-content" class="settings-content">
+        <button onclick="showAddClient()">Add Client Details</button>
+        <button onclick="showAddClient()">Modify Client Details</button>
+        <button onclick="showAddClient()">Delete Client Details</button>
+    </div>
+</div>
+
+<div id="commandRunner" class="command-runner">
+    <h2>Command Runner</h2>
+    <textarea id="commands" placeholder="Enter commands here..."></textarea>
+    <button onclick="runCommands()">Run Commands</button>
+    <button onclick="backToSelection()">Back to Client Selection</button>
+</div>
+
+<script>
+    function showCommandRunner() {
+        const clientInput = document.getElementById('clientInput').value;
+        if (!clientInput) {
+            alert('Please enter a client name.');
+            return;
+        }
+        document.getElementById('clientSelection').classList.remove('show');
+        document.getElementById('commandRunner').classList.add('show');
+    }
+
+    function runCommands() {
+        const commands = document.getElementById('commands').value;
+        alert(`Running commands:\n${commands}`);
+    }
+
+    function backToSelection() {
+        document.getElementById('addClient').style.display = 'none';
+        document.getElementById('clientSelection').classList.add('show');
+        document.getElementById('commandRunner').classList.remove('show');
+    }
+
+    function toggleSettings() {
+        var content = document.getElementById("settings-content");
+        content.style.display = content.style.display === "block" ? "none" : "block";
+    }
+
+    function showAddClient() {
+        document.getElementById('clientSelection').classList.remove('show');
+        var content = document.getElementById("addClient");
+        content.style.display = "block";
+    }
+
+    function logClientDetails() {
+    const clientName = document.getElementById('clientName');
+    const userId = document.getElementById('userId');
+    const password = document.getElementById('password');
+
+    // Check if any of the fields are empty
+    if (!clientName.value || !userId.value || !password.value) {
+        alert('Please enter all client details.');
+    } else {
+        console.log(`Client: ${clientName.value}, User ID: ${userId.value}, Password: ${password.value}`);
+        alert(`Changes reflected successfully: ${clientName.value}`);
+
+        // Clear the input fields after successful addition
+        clientName.value = '';
+        userId.value = '';
+        password.value = '';
+
+        // Here, add code to actually save the client details
+    }
+}
+
+
+    // Hide settings when clicking outside
+    document.addEventListener('click', function(event) {
+        const settingsContent = document.getElementById('settings-content');
+        const settingsIcon = document.querySelector('.settings-icon');
+        if (!settingsIcon.contains(event.target) && !settingsContent.contains(event.target)) {
+            settingsContent.style.display = 'none';
+        }
+    });
+</script>
+
+</body>
+</html>
