@@ -22,6 +22,11 @@ A set of python program files which can be used smartly and efficiently to make 
 > Have a bulk load of devices to verify if they are connected to the network and up?
 > Performing a simple OS check before pinging the device. 
 > You can use the provided functions to simply check for their remote reachability status with or without the jumphost. 
+> Streamlined the code by eliminating two redundant variables.
+[WIP]
+
+>**Database folder**
+>Created two files, Database.py and test.db
 [WIP]
 
 [Requirement files will be added later!]

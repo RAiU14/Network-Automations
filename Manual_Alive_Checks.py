@@ -5,7 +5,7 @@ from Connection import net_connect
 
 # To check if the IP Address of the given device is alive
 def jump_host_alive_test(device_ip):
-    repeater, repeat_counter, packet_loss, long_ping_packet_res, e_msg = False, 2, "0", "0", None
+    repeater, repeat_counter, packet_loss = False, 2, "0"
     try:
         while not repeater:
             ping_result = net_connect.send_command_timing(command_string=f"ping -c 5 {device_ip}", read_timeout=120.0, last_read=2.0)
