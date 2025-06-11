@@ -251,19 +251,3 @@ def report_generation(file_path):
     df.to_excel(file_path, index=False)
 
 end_time = time.time()
-
-sh_ver_data = show_version()
-print(NX_OS(sh_ver_data))
-print(serial_number(sh_ver_data))
-print(device_name(sh_ver_data))
-print(uptime(sh_ver_data))
-print(last_reboot(sh_ver_data))
-print(env_details())
-print(interface_brief())
-print(module_info(module_model_numbers(modules()), module_serial_numbers(modules())))
-print(sys_resource())
-print(flash_details())
-print(critical_logs())
-print(f"Elapsed Time: {end_time - start_time} seconds")
-
-# This code is a WIP

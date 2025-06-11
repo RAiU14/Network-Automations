@@ -4,7 +4,7 @@ A set of python program files which can be used smartly and efficiently to make 
 >**Cisco_EOX.py**  
 > A web-scrapping python program to gather EOX details about a device if product/model number of the device is passed as an input.
 > Output is not stored anywhere, just displayed. (As of now)
-[Needs fixing!]
+[Broken!]
 
 >**Connection.py**
 > Has the necessary snippet to connect to the network to run the netmiko commands.
@@ -17,8 +17,12 @@ A set of python program files which can be used smartly and efficiently to make 
 > Created to analyse and output the logs to excel sheet for quick understanding and reference. It works in one or multiple files with some constraints. 
 [WIP]
 
->**Ping_Checks.py**
-> Performing a ping test from the jump host to check if the device is connected to the network.
+>**Manual_Alive_Checks.py**
+> [Uses inbuilt Python Functions]
+> Have a bulk load of devices to verify if they are connected to the network and up?
+> Performing a simple OS check before pinging the device. 
+> You can use the provided functions to simply check for their remote reachability status with or without the jumphost. 
+[WIP]
 
 [Requirement files will be added later!]
 

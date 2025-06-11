@@ -1,9 +1,10 @@
 import time
+import platform
 from Connection import net_connect
 
 
 # To check if the IP Address of the given device is alive
-def ping_test(device_ip):
+def jump_host_alive_test(device_ip):
     repeater, repeat_counter, packet_loss, long_ping_packet_res, e_msg = False, 2, "0", "0", None
     try:
         while not repeater:
@@ -32,3 +33,12 @@ def ping_test(device_ip):
     except Exception as e:
         print(f"Error! {e}")
         return {False: [int(packet_loss)]}
+
+# WIP
+def alive_check(device_ip):
+    return
+
+# WIP
+def platform_check():
+    OS = platform.system()
+    return
