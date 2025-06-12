@@ -26,7 +26,9 @@ A set of python program files which can be used smartly and efficiently to make 
 [WIP]
 
 >**Database folder**
->Created two files, Database.py and test.db
+>Created two files, Database.py and EOX.db
+>Database.py is coded to take input from the user, the user input is set as primary key.
+>Based on the user input, data associated to the primary key is fetched from the databse EOX.db and displayed as output to the user.
 [WIP]
 
 [Requirement files will be added later!]
