@@ -1,14 +1,16 @@
 import time
 import platform
+import subprocess
 from Connection import net_connect
 
 
 # To check if the IP Address of the given device is alive
-def jump_host_alive_test(device_ip):
+def jp_device_check(device_ip):
     repeater, repeat_counter, packet_loss = False, 2, "0"
     try:
         while not repeater:
             ping_result = net_connect.send_command_timing(command_string=f"ping -c 5 {device_ip}", read_timeout=120.0, last_read=2.0)
+            # Using Unix like terminal. This uses ping is lower case. Where as Windows uses upper. 
             if 'ping statistics' not in ping_result:
                 time.sleep(5)
                 long_ping = net_connect.read_channel_timing(max_loops=10, last_read=10, read_timeout=120)
@@ -34,11 +36,28 @@ def jump_host_alive_test(device_ip):
         print(f"Error! {e}")
         return {False: [int(packet_loss)]}
 
-# WIP
-def alive_check(device_ip):
-    return
 
-# WIP
+# To check if devices in the network is responding. 
+def alive_check(device_ip):
+    try:
+        while not repeater:
+            ping_result = subprocess.check_output(f"ping -{platform_check} 5 {device_ip}", universal_newlines=True)
+            ping_info = ping_result[ping_result.find('Ping statistics') + 19:]
+            loss_count = ping_info[ping_info.find('Lost') + 7: ping_info.find('Lost') + ping_info[ping_info.find('Lost') + 1:].find('(')]
+            if int(loss_count) <= 0:
+                return f"Ping Passed for {device_ip}"
+            else: 
+                repeater = True
+                repeat_counter -= 1
+                if repeat_counter == 0:
+                    return f"Ping Failed for {device_ip}"
+    except subprocess.CalledProcesseError as e:
+        print(f'Ping failed: {e} for device {device_ip}')
+# [Tested on Windows]
+
+# Tested the following in Windows and WSL
 def platform_check():
-    OS = platform.system()
-    return
+    if platform.system().lower == 'windows':
+        return 'n' 
+    else:   
+        return 'c'
