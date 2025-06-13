@@ -39,21 +39,37 @@ def jp_device_check(device_ip):
 
 # To check if devices in the network is responding. 
 def alive_check(device_ip):
+    repeater, repeat_counter, packet_loss = False, 2, "0"
     try:
-        while not repeater:
-            ping_result = subprocess.check_output(f"ping -{platform_check} 5 {device_ip}", universal_newlines=True)
-            ping_info = ping_result[ping_result.find('Ping statistics') + 19:]
-            loss_count = ping_info[ping_info.find('Lost') + 7: ping_info.find('Lost') + ping_info[ping_info.find('Lost') + 1:].find('(')]
-            if int(loss_count) <= 0:
-                return f"Ping Passed for {device_ip}"
-            else: 
-                repeater = True
-                repeat_counter -= 1
-                if repeat_counter == 0:
-                    return f"Ping Failed for {device_ip}"
+        if platform_check == 'n':
+            while not repeater:
+                ping_result = subprocess.check_output(f"ping -{platform_check} 4 {device_ip}", universal_newlines=True)
+                ping_info = ping_result[ping_result.find('Ping statistics') + 19:]
+                loss_count = ping_info[ping_info.find('Lost') + 7: ping_info.find('Lost') + ping_info[ping_info.find('Lost') + 1:].find('(')]
+                if int(loss_count) <= 0:
+                    return f"Ping Passed for {device_ip}"
+                else: 
+                    repeater = True
+                    repeat_counter -= 1
+                    if repeat_counter == 0:
+                        return f"Ping Failed for {device_ip}"
+    # [Tested on Windows]
+        else: 
+            while not repeater:
+                ping_result = subprocess.check_output(['bash', '-c', f"ping -{platform_check} 5 {device_ip}"], universal_newlines=True)
+                ping_info = ping_result[ping_result.find('ping statistics') + 19:]
+                loss_count = ping_info[ping_info.find('received,') + 10:ping_info.find('packet loss') - 2]
+                if int(loss_count) <= 0:
+                    return f"Ping Passed for {device_ip}"
+                else: 
+                    repeater = True
+                    repeat_counter -= 1
+                    if repeat_counter == 0:
+                        return f"Ping Failed for {device_ip}"
+    # [Tested on WSL]
     except subprocess.CalledProcesseError as e:
         print(f'Ping failed: {e} for device {device_ip}')
-# [Tested on Windows]
+
 
 # Tested the following in Windows and WSL
 def platform_check():
