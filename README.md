@@ -22,9 +22,7 @@ A set of python program files which can be used smartly and efficiently to make 
 > Have a bulk load of devices to verify if they are connected to the network and up?
 > Performing a simple OS check before pinging the device. 
 > You can use the provided functions to simply check for their remote reachability status with or without the jumphost. 
-> Code updated to check via Windows. 
-+ To be added for Unix Style OS output as well later. 
-[WIP]
+> Code updated to check via Windows, Unix. 
 
 >**Database folder**
 > Created two files, Database.py and EOX.db
