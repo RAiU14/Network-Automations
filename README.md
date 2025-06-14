@@ -26,9 +26,11 @@ A set of python program files which can be used smartly and efficiently to make 
 [WIP]
 
 >**Database folder**
->Created two files, Database.py and EOX.db
->Database.py is coded to take input from the user, the user input is set as primary key.
->Based on the user input, data associated to the primary key is fetched from the databse EOX.db and displayed as output to the user.
+> Created two files, Database.py and EOX.db
+> Database.py is coded to take input from the user, the user input is set as primary key.
+> Based on the user input, data associated to the primary key is fetched from the databse EOX.db and displayed as output to the user.
+
+> Added few extra lines of code to the same Database.py file to achieve the results which were obtained through database/SQL, but by using CSV file.
 [WIP]
 
 [Requirement files will be added later!]

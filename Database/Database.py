@@ -50,19 +50,61 @@ import csv
 
 csv_file = 'EXO_details.csv'
 
+# Add details to existing CSV
 def add_details():
-    with open(csv_file, mode = "a", newline= '' ) as file :
+    with open(csv_file, mode="a", newline='') as file:
         writer = csv.writer(file)
-        Device_Model = input("Enter Device Model = "),
-        End_of_Life_Announcement_Date  = input("Enter End of Life Annoncement Date = "),
-        End_of_Sale_Date_HW  = input("Enter End of Sale Date = "),
-        Last_Ship_Date_HW  = input("Enter Last Ship Date = "),
-        End_of_SW_Maintenance_Releases_Date_HW  = input("Enter End of SW Maintainance Release Date HW = "),
-        End_of_Vulnerability_Security_Support_HW  = input("Enter End of Vulnerability support HW = "),
-        End_of_Routine_Failure_Analysis_Date_HW  = input("Enter Routine Failure Analysis Date HW = "),
-        End_of_New_Service_Attachment_Date_HW  = input("Enter New Service Attachment Date HW = "),
-        End_of_Service_Contract_Renewal_Date_HW  = input("Enter End of Service Contract Renewal Date HW = "),
-        Last_Date_of_Support_HW  = input("Enter Last Date of Support HW = ")
-        writer.writerow([Device_Model, End_of_Life_Announcement_Date, End_of_Sale_Date_HW, Last_Ship_Date_HW, End_of_SW_Maintenance_Releases_Date_HW, End_of_Vulnerability_Security_Support_HW, End_of_Routine_Failure_Analysis_Date_HW, End_of_New_Service_Attachment_Date_HW, End_of_Service_Contract_Renewal_Date_HW, Last_Date_of_Support_HW])
-        
-add_details()
+
+        Device_Model = input("Enter Device Model = ")
+        End_of_Life_Announcement_Date = input("Enter End of Life Announcement Date = ")
+        End_of_Sale_Date_HW = input("Enter End of Sale Date = ")
+        Last_Ship_Date_HW = input("Enter Last Ship Date = ")
+        End_of_SW_Maintenance_Releases_Date_HW = input("Enter End of SW Maintenance Release Date HW = ")
+        End_of_Vulnerability_Security_Support_HW = input("Enter End of Vulnerability support HW = ")
+        End_of_Routine_Failure_Analysis_Date_HW = input("Enter Routine Failure Analysis Date HW = ")
+        End_of_New_Service_Attachment_Date_HW = input("Enter New Service Attachment Date HW = ")
+        End_of_Service_Contract_Renewal_Date_HW = input("Enter End of Service Contract Renewal Date HW = ")
+        Last_Date_of_Support_HW = input("Enter Last Date of Support HW = ")
+
+        writer.writerow([
+            Device_Model,
+            End_of_Life_Announcement_Date,
+            End_of_Sale_Date_HW,
+            Last_Ship_Date_HW,
+            End_of_SW_Maintenance_Releases_Date_HW,
+            End_of_Vulnerability_Security_Support_HW,
+            End_of_Routine_Failure_Analysis_Date_HW,
+            End_of_New_Service_Attachment_Date_HW,
+            End_of_Service_Contract_Renewal_Date_HW,
+            Last_Date_of_Support_HW
+        ])
+
+# Retrieve details by model number
+def get_details():
+    with open(csv_file, mode="r") as file:
+        reader = csv.reader(file)
+        headers = next(reader)  # Read the header row
+
+        search_key = input("Enter model number: ").strip()
+        found = False
+
+        for row in reader:
+            if row[0].strip() == search_key:
+                print("\nDevice Details:")
+                for header, value in zip(headers, row):
+                    print(f"{header}: {value}")
+                found = True
+                break
+
+        if not found:
+            print("No details found")
+
+
+# Run the functions
+choice = input("Press A if you want to add and Press B is you want to retrieve : ")
+if choice == "A":
+    add_details()
+elif choice == "B":
+    get_details()
+else : 
+    print("Wrong input")
