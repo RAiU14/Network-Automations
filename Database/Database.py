@@ -44,6 +44,7 @@ table_data()
 conn.commit()
 conn.close()
 
+#############################################################################################################################################################################################################
 
 ## Trying the same in CSV method.
 import csv
@@ -108,3 +109,57 @@ elif choice == "B":
     get_details()
 else : 
     print("Wrong input")
+    
+
+#############################################################################################################################################################################################################
+
+## Trying the same in json method.
+import json
+import os
+
+filename = "EOX_details.json"
+
+# Load existing data or initialize empty dictionary
+if os.path.exists(filename) and os.path.getsize(filename) > 0:
+    with open(filename, "r") as file:
+        data = json.load(file)
+else:
+    data = {}
+
+# Add details to existing json
+def add_details_json():
+    Device_Model = input("Enter Device Model: ")
+    data[Device_Model] = {
+        "End_of_Life_Announcement_Date": input("Enter End of Life Announcement Date: "),
+        "End_of_Sale_Date_HW": input("Enter End of Sale Date: "),
+        "Last_Ship_Date_HW": input("Enter Last Ship Date: "),
+        "End_of_SW_Maintenance_Releases_Date_HW": input("Enter End of SW Maintenance Release Date HW: "),
+        "End_of_Vulnerability_Security_Support_HW": input("Enter End of Vulnerability support HW: "),
+        "End_of_Routine_Failure_Analysis_Date_HW": input("Enter Routine Failure Analysis Date HW: "),
+        "End_of_New_Service_Attachment_Date_HW": input("Enter New Service Attachment Date HW: "),
+        "End_of_Service_Contract_Renewal_Date_HW": input("Enter End of Service Contract Renewal Date HW: "),
+        "Last_Date_of_Support_HW": input("Enter Last Date of Support HW: ")
+    }
+
+    with open(filename, "w") as file:
+        json.dump(data, file, indent=4)
+    print("Data added successfully.")
+
+# Retrieve details by model number  
+def get_details_json():
+    search_key = input("Enter model number: ")
+    if search_key in data:
+        print(f"Data for {search_key}:")
+        for k, v in data[search_key].items():
+            print(f"{k}: {v}")
+    else:
+        print("Model not found.")
+
+# Run the functions
+choice = input("Choose A for input and B for retrieval: ")
+if choice.lower() == "a":
+    add_details_json()
+elif choice.lower() == "b":
+    get_details_json()
+else:
+    print("Invalid choice.")

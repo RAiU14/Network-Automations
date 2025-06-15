@@ -31,6 +31,8 @@ A set of python program files which can be used smartly and efficiently to make 
 > Based on the user input, data associated to the primary key is fetched from the databse EOX.db and displayed as output to the user.
 
 > Added few extra lines of code to the same Database.py file to achieve the results which were obtained through database/SQL, but by using CSV file.
+
+> Added few extra lines of code to the same Database.py file to achieve the results which were obtained through database/SQL, but by using json.
 [WIP]
 
 [Requirement files will be added later!]
