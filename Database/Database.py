@@ -36,9 +36,48 @@ def table_data():
     data = cursor.fetchall()
     print("Table data =", data)
 
+# update existing data    
+def update_data():
+    model_number = input("Enter model number: ")
+    update = input("""Which field do you want to edit?:
+        1 - Device_Model
+        2 - End_of_Life_Announcement_Date
+        3 - End_of_Sale_Date_HW
+        4 - Last_Ship_Date_HW
+        5 - End_of_SW_Maintenance_Releases_Date_HW
+        6 - End_of_Vulnerability_Security_Support_HW
+        7 - End_of_Routine_Failure_Analysis_Date_HW
+        8 - End_of_New_Service_Attachment_Date_HW
+        9 - End_of_Service_Contract_Renewal_Date_HW
+        10 - Last_Date_of_Support_HW
+        Enter your choice (1-10): """)
+
+    fields = {
+        "1": "Device_Model",
+        "2": "End_of_Life_Announcement_Date",
+        "3": "End_of_Sale_Date_HW",
+        "4": "Last_Ship_Date_HW",
+        "5": "End_of_SW_Maintenance_Releases_Date_HW",
+        "6": "End_of_Vulnerability_Security_Support_HW",
+        "7": "End_of_Routine_Failure_Analysis_Date_HW",
+        "8": "End_of_New_Service_Attachment_Date_HW",
+        "9": "End_of_Service_Contract_Renewal_Date_HW",
+        "10": "Last_Date_of_Support_HW"
+    }
+
+    if update in fields:
+        new_value = input(f"Enter new value for {fields[update]}: ")
+        query = f'UPDATE EOX SET "{fields[update]}" = ? WHERE Device_Model = ?'
+        cursor.execute(query, (new_value, model_number))
+        conn.commit()
+        print("Record updated successfully.")
+    else:
+        print("Invalid choice.")
+
 # function call for entering input and retriving data
 enter_data()
 table_data()
+update_data()
 
 # commit to database and closing the connection to database
 conn.commit()

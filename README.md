@@ -33,6 +33,8 @@ A set of python program files which can be used smartly and efficiently to make 
 > Added few extra lines of code to the same Database.py file to achieve the results which were obtained through database/SQL, but by using CSV file.
 
 > Added few extra lines of code to the same Database.py file to achieve the results which were obtained through database/SQL, but by using json.
+
+> Revisted the SQL section to add the edit functionality to the existing data in a table.
 [WIP]
 
 [Requirement files will be added later!]
