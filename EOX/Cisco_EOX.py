@@ -2,8 +2,43 @@ import bs4
 import re
 import requests
 
-# Example Device - AIR-AP2802I-FBULK
+# Note: This program works as long as the product page from Cisco is not changed~~ 
 
+
+cisco_url = "https://www.cisco.com"
+
+# This function is used to obtain all categories from the product page.
+def category():
+    Technology_Links = []
+    title = bs4.BeautifulSoup(requests.get(f"{cisco_url}/c/en/us/support/all-products.html").text, 'lxml').find("h3", string="All Product and Technology Categories").find_next("table").find_all("a")
+    for link in title:
+        Technology_Links.append({link.text.strip(): link.get("href")})
+    return Technology_Links
+
+# This function is used to open a specific category page.
+def open_cat():
+    cat_list = []
+    dict = category()
+    for tech in dict:
+        for key in tech:
+            cat_list.append(key)
+    index = 1
+    for item in cat_list:
+        print(f'{index}. {item}')
+        index += 1
+    repeat = True
+    while repeat:
+        try:
+            query = int(input("Input Technology Type: "))
+            repeat = False
+        except ValueError:
+            repeat = True
+    print(cat_list[query-1], f"Link: {dict[query-1][cat_list[query-1]]}")
+# WIP
+
+
+
+# Below code is unmodified and requires further testing and modifications.
 cisco_url = "https://www.cisco.com"
 
 cisco_wireless_url = f"{cisco_url}/c/en/us/support/wireless/index.html"
