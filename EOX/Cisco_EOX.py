@@ -7,36 +7,31 @@ import requests
 
 cisco_url = "https://www.cisco.com"
 
-# This function is used to obtain all categories from the product page.
+# This function returns all categories from the product page.
 def category():
-    Technology_Links = []
+    tech = {'category': {}}
     title = bs4.BeautifulSoup(requests.get(f"{cisco_url}/c/en/us/support/all-products.html").text, 'lxml').find("h3", string="All Product and Technology Categories").find_next("table").find_all("a")
     for link in title:
-        Technology_Links.append({link.text.strip(): link.get("href")})
-    return Technology_Links
+        name = link.text.strip().lower()
+        links = link.get('href')
+        if name and links:
+            tech['category'][name] = links
+    return tech
 
-# This function is used to open a specific category page.
-def open_cat():
-    cat_list = []
-    dict = category()
-    for tech in dict:
-        for key in tech:
-            cat_list.append(key)
-    index = 1
-    for item in cat_list:
-        print(f'{index}. {item}')
-        index += 1
-    repeat = True
-    while repeat:
-        try:
-            query = int(input("Input Technology Type: "))
-            repeat = False
-        except ValueError:
-            repeat = True
-    print(cat_list[query-1], f"Link: {dict[query-1][cat_list[query-1]]}")
+# This function is used to obtain device related links from the category.
+def open_cat(tech):
+    link = category()['category'][tech]
+    url = requests.get(f"{cisco_url}{link}").text
+    list = bs4.BeautifulSoup(url, 'lxml')
+    series = list.find(id="allSupportedProducts")  # Can replace it to EOS to work
+    names = series.find_all("a")
+    for things in names:
+        print(things.text)
+    return
 # WIP
 
-
+open_cat('wireless')
+exit()
 
 # Below code is unmodified and requires further testing and modifications.
 cisco_url = "https://www.cisco.com"
