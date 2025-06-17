@@ -34,7 +34,11 @@ def table_data():
     model_number = input("Enter model number = ")
     cursor.execute(("SELECT * FROM EOX WHERE Device_Model = ?"), (model_number))
     data = cursor.fetchall()
-    print("Table data =", data)
+    column_names = [description[0] for description in cursor.description]
+    for row in data:
+        print("\n--Retrived Data--")
+        for col_name, value in zip(column_names, row):
+            print(f"{col_name}: {value}")
 
 # update existing data    
 def update_data():
