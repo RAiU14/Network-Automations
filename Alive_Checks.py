@@ -4,9 +4,9 @@ import subprocess
 from Connection import net_connect
 
 
-# To check if the IP Address of the given device is alive
+# To check if the IP Address of the given device is alive using a JumpHost
 def jp_device_check(device_ip):
-    repeater, repeat_counter, packet_loss = False, 2, "0"
+    repeater, repeat_counter = False, 2
     try:
         while not repeater:
             ping_result = net_connect.send_command_timing(command_string=f"ping -c 5 {device_ip}", read_timeout=120.0, last_read=2.0)
@@ -33,15 +33,14 @@ def jp_device_check(device_ip):
                 else:
                     return {False: [int(loss_count)]}
     except Exception as e:
-        print(f"Error! {e}")
-        return {False: [int(packet_loss)]}
+        print(f"Ping Failed for {device_ip}\nError! {e}")
 
 
 # To check if devices in the network is responding. 
 def alive_check(device_ip):
-    repeater, repeat_counter, packet_loss = False, 2, "0"
+    repeater, repeat_counter, command = False, 2, platform_check()
     try:
-        if platform_check == 'n':
+        if command == 'n':
             while not repeater:
                 ping_result = subprocess.check_output(f"ping -{platform_check} 4 {device_ip}", universal_newlines=True)
                 ping_info = ping_result[ping_result.find('Ping statistics') + 19:]
