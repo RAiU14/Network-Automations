@@ -3,8 +3,6 @@ import re
 import requests
 
 # Note: This program works as long as the product page from Cisco is not changed~~ 
-
-
 cisco_url = "https://www.cisco.com"
 
 # This function returns all categories from the product page.
@@ -20,18 +18,35 @@ def category():
 
 # This function is used to obtain device related links from the category.
 def open_cat(tech):
-    link = category()['category'][tech]
-    url = requests.get(f"{cisco_url}{link}").text
-    list = bs4.BeautifulSoup(url, 'lxml')
-    series = list.find(id="allSupportedProducts")  # Can replace it to EOS to work
-    names = series.find_all("a")
-    for things in names:
-        print(things.text)
-    return
-# WIP
+    try:
+        # The below works only on the below mentioned technology as the other page formats are currently different as of date.
+        if tech == 'wireless' or tech == 'unified communications' or tech == 'security':
+            device_list = {'series': {}}
+            eox = {'eox': {}}
+            list = bs4.BeautifulSoup(requests.get(f"{cisco_url}{category()['category'][tech]}").text, 'lxml')
+            # Obtaining all the devices supported from the technology category
+            series = list.find(id="allSupportedProducts").find_all("a") # Can replace it to EOS to work
+            for product in series:
+                name = product.text.strip()
+                links = product.get('href')
+                if name and links:
+                    device_list['series'][name] = links
+            # Obtaining all the devices in EOX from the WebPage
+            eox_list = list.find(id="eos").find_all("tr")
+            for devices in eox_list:
+                eox_present = devices.find_all('a')
+                if eox_present:
+                    if len(eox_present) > 1:
+                        eox['eox'][eox_present[0].text.strip()] = eox_present[1].get('href')
+                    else: 
+                        eox['eox'][eox_present[0].text.strip()] = eox_present[0].get('href')
+            return [device_list, eox]
+        else:
+            return None
+        # WIP
+    except Exception as e:
+        print(f'Error occurred {e}')
 
-open_cat('wireless')
-exit()
 
 # Below code is unmodified and requires further testing and modifications.
 cisco_url = "https://www.cisco.com"

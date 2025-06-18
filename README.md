@@ -2,6 +2,7 @@
 A set of python program files which can be used smartly and efficiently to make things easier! 
 
 >**Cisco_EOX.py**  
+> Cisco API inaccessible? We got you!
 > A web-scrapping python python program to gather EOX details about a device if product/model number of the device is passed as an input.
 > Will use the database package made to store details of the scrapped information. 
 > New requirements.txt used while creating and testing the program.
