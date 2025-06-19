@@ -19,34 +19,46 @@ def category():
 # This function is used to obtain device related links from the category.
 def open_cat(tech):
     try:
-        # The below works only on the below mentioned technology as the other page formats are currently different as of date.
+        # The checks are mentioned as such based on the webpage layout as of date.
         if tech == 'wireless' or tech == 'unified communications' or tech == 'security':
             device_list = {'series': {}}
-            eox = {'eox': {}}
+            eox_link = {'eox': {}}
             list = bs4.BeautifulSoup(requests.get(f"{cisco_url}{category()['category'][tech]}").text, 'lxml')
             # Obtaining all the devices supported from the technology category
-            series = list.find(id="allSupportedProducts").find_all("a") # Can replace it to EOS to work
+            series = list.find(id="allSupportedProducts").find_all("a")
             for product in series:
                 name = product.text.strip()
                 links = product.get('href')
                 if name and links:
-                    device_list['series'][name] = links
+                    device_list['series'][name] = links  # All the devices in the page which has a link.
             # Obtaining all the devices in EOX from the WebPage
             eox_list = list.find(id="eos").find_all("tr")
             for devices in eox_list:
                 eox_present = devices.find_all('a')
                 if eox_present:
                     if len(eox_present) > 1:
-                        eox['eox'][eox_present[0].text.strip()] = eox_present[1].get('href')
+                        eox_link['eox'][eox_present[0].text.strip()] = eox_present[1].get('href')
                     else: 
-                        eox['eox'][eox_present[0].text.strip()] = eox_present[0].get('href')
-            return [device_list, eox]
+                        eox_link['eox'][eox_present[0].text.strip()] = eox_present[0].get('href')
+                    # EOX Links available from the WebPage
+            return [device_list, eox_link]
         else:
-            return None
-        # WIP
+            device_list = {'series': {}}
+            eox_link = {'eox': {}}
+            list = max(enumerate(bs4.BeautifulSoup(requests.get(f"{cisco_url}{category()['category'][tech]}").text, 'lxml').find_all("div", class_="col full")), key=lambda x: len(x[1]))[1].find_all('ul') # Enumerating and comparing values of series of length to find the appropriate column data
+            for devices in list:
+                for device in devices.find_all('li'):
+                    eol = device.find("img")
+                    alt_text = eol.get("alt") if eol else None
+                    a_tag = device.find("a")
+                    if a_tag:
+                        if alt_text == "End of Support" or alt_text == "End of Sale":
+                            eox_link['eox'][a_tag.text.strip()] = a_tag.get("href")
+                        else:
+                            device_list['series'][a_tag.text.strip()] = a_tag.get("href")    
+            return [eox_link, device_list]
     except Exception as e:
         print(f'Error occurred {e}')
-
 
 # Below code is unmodified and requires further testing and modifications.
 cisco_url = "https://www.cisco.com"
