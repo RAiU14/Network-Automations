@@ -13,7 +13,7 @@ A set of python program files which can be used smartly and efficiently to make 
 > I do **not take any responsibility** for how this tool is used — especially for **commercial purposes**, product sales, or automation in production environments. Use it at your own discretion and risk.  
 > Always validate EOX details directly from [Cisco's official website](https://www.cisco.com) before making any business decisions.
 > requirements.txt available.
-> [WIP]
+> [WIP. Everything is a function now and not a package.]
 >> What is working? 
 >> Can obtain list of devices marked for EOL/EOS available in the Cisco Page.
 

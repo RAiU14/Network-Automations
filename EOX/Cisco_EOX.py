@@ -16,8 +16,10 @@ def category():
             tech['category'][name] = links
     return tech
 
-# This function is used to obtain device related links from the category.
-def open_cat(tech):
+# This function is used to obtain device series related links from the category.
+# Expected Arguments are - "wireless, switches, routers, security, unified communications" as of now. 
+# This will be removed for seamless execution later. 
+def open_cat(tech: str):
     try:
         # The checks are mentioned as such based on the webpage layout as of date.
         if tech == 'wireless' or tech == 'unified communications' or tech == 'security':
@@ -31,16 +33,16 @@ def open_cat(tech):
                 links = product.get('href')
                 if name and links:
                     device_list['series'][name] = links  # All the devices in the page which has a link.
-            # Obtaining all the devices in EOX from the WebPage
+            # Obtaining all the devices in EOX List from the WebPage
+            # It is evidently found out that the EOX List from the WebPage does not redirect to the appropriate EOX details as of date. Hence, the links returned are that of the product Details Page which will sometimes (if existing) will have the EOL Details. 
             eox_list = list.find(id="eos").find_all("tr")
             for devices in eox_list:
                 eox_present = devices.find_all('a')
                 if eox_present:
                     if len(eox_present) > 1:
-                        eox_link['eox'][eox_present[0].text.strip()] = eox_present[1].get('href')
+                        eox_link['eox'][eox_present[1].text.strip()] = eox_present[1].get('href')
                     else: 
                         eox_link['eox'][eox_present[0].text.strip()] = eox_present[0].get('href')
-                    # EOX Links available from the WebPage
             return [device_list, eox_link]
         else:
             device_list = {'series': {}}
@@ -56,9 +58,44 @@ def open_cat(tech):
                             eox_link['eox'][a_tag.text.strip()] = a_tag.get("href")
                         else:
                             device_list['series'][a_tag.text.strip()] = a_tag.get("href")    
-            return [eox_link, device_list]
+            return [device_list, eox_link]
     except Exception as e:
         print(f'Error occurred {e}')
+        return None
+
+
+# Obtaining the next Link for EOX from the Product Page. 
+def eox_link_extract(link: str):
+    try:
+        return bs4.BeautifulSoup(requests.get(f'{link}').text, 'lxml').find('table', class_="birth-cert-table").find("tr", class_="birth-cert-status").find('a').get('href')
+    except Exception as e:
+        print(f'Error occurred {e}')
+        return None 
+# Possible integration to open_cat(x)
+
+
+# Obtaining a list EOX Links
+# Different possibilites to filter down URL to be added later.
+def eox_details(link: str):
+    urls = []
+    language = False
+    try:
+        sections = bs4.BeautifulSoup(requests.get(f'{link}').text, 'lxml').find('ul', class_='listing').find_all('ul')
+        for titles in sections:
+            title = titles.find('div', class_='heading')
+            if title and title.text == 'English':  # Possibility 1
+                links = titles.find_all('li')
+                for link in links: 
+                    urls.append(link.find('a').get('href'))
+        return urls
+    except Exception as e:
+        print(f'Error occured {e}')
+        return None
+
+# print(eox_details('https://www.cisco.com/c/en/us/products/switches/catalyst-1000-series-switches/eos-eol-notice-listing.html'))
+print(len(eox_details('https://www.cisco.com/c/en/us/products/switches/nexus-5000-series-switches/eos-eol-notice-listing.html')))
+exit()
+
 
 # Below code is unmodified and requires further testing and modifications.
 cisco_url = "https://www.cisco.com"
