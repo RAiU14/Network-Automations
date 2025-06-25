@@ -185,15 +185,28 @@ columns = [
 
 # Add new device details
 def add_device_details(Device_Model, *details):
-    if Device_Model in data:
-        print(f"Model '{Device_Model}' already exists. Model details exist.")
-        return
-
     if len(details) != len(columns):
         print("Error: Incorrect number of details provided.")
         return
 
-    data[Device_Model] = dict(zip(columns, details))
+    new_details = dict(zip(columns, details))
+
+    if Device_Model in data:
+        existing_details = data[Device_Model]
+        if existing_details == new_details:
+            print(f"Model '{Device_Model}' already exists with identical details.")
+            return
+        else:
+            for key in columns:
+                if existing_details.get(key) != new_details[key]:
+                    existing_details[key] = new_details[key]
+            data[Device_Model] = existing_details
+            with open(filename, "w") as file:
+                json.dump(data, file, indent=4)
+            print(f"Model '{Device_Model}' existed. Details updated.")
+            return
+
+    data[Device_Model] = new_details
     with open(filename, "w") as file:
         json.dump(data, file, indent=4)
     print(f"Details for '{Device_Model}' added successfully.")
@@ -226,6 +239,6 @@ def edit_device_detail(Device_Model, column_name, new_value):
     print(f"Updated '{column_name}' for model '{Device_Model}' to '{new_value}'.")
     
 
-# add_device_details("xyz", "1", "2", "3", "4", "5", "6", "7", "8", "9")
+# add_device_details("xyz", "1", "2", "3", "4", "5", "6", "7", "8", "NA")
 # get_device_details("xyz")
-# edit_device_detail("xyz", "Last_Date_of_Support_HW", "09")
+# edit_device_detail("xyz", "Last_Date_of_Support_HW", "10")
