@@ -1,31 +1,43 @@
 import bs4
-import re
 import requests
 from langdetect import detect
-
+import logging
+import datetime
+import os
 # Note: This program works as long as the product page from Cisco is not changed~~ 
+
+# Used for logging the file. 
+log_dir = os.path.join(os.path.dirname(__file__), "logs")
+os.makedirs(log_dir, exist_ok=True)
+logging.basicConfig(filename=os.path.join(log_dir,  f"EOX_{datetime.datetime.today().strftime('%Y-%m-%d')}.log"), level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+
 cisco_url = "https://www.cisco.com"
 
 # This function returns all categories from the product page.
 def category():
-    tech = {'category': {}}
+    logging.info("Starting category search process.")
+    tech = {}
     title = bs4.BeautifulSoup(requests.get(f"{cisco_url}/c/en/us/support/all-products.html").text, 'lxml').find("h3", string="All Product and Technology Categories").find_next("table").find_all("a")
     for link in title:
-        name = link.text.strip().lower()
+        name = link.text.strip()
         links = link.get('href')
         if name and links:
-            tech['category'][name] = links
+            tech[name] = links
+    logging.debug("Category Search Completed.")
     return tech
 
+
 # This function is used to obtain device series related links from the category.
-# Expected Arguments are technology names as given in the WebPage which are - "wireless, switches, routers, security, unified communications" as of now. 
 def open_cat(tech: str):
+    logging.info("Starting category search process.")
     try:
         # The checks are mentioned as such based on the webpage layout as of date.
-        if tech == 'wireless' or tech == 'unified communications' or tech == 'security':
+        link_check = bs4.BeautifulSoup(requests.get(f"{cisco_url}{tech}").text, 'lxml').find(id="allSupportedProducts")
+        if link_check:
             device_list = {'series': {}}
             eox_link = {'eox': {}}
-            list = bs4.BeautifulSoup(requests.get(f"{cisco_url}{category()['category'][tech]}").text, 'lxml')
+            list = bs4.BeautifulSoup(requests.get(f"{cisco_url}{tech}").text, 'lxml')
             # Obtaining all the devices supported from the technology category
             for product in list.find(id="allSupportedProducts").find_all("a"):
                 name = product.text.strip()
@@ -38,14 +50,15 @@ def open_cat(tech: str):
                 eox_present = devices.find_all('a')
                 if eox_present:
                     if len(eox_present) > 1:
-                        eox_link['eox'][eox_present[1].text.strip()] = eox_present[1].get('href')
-                    else: 
+                        eox_link['eox'][eox_present[0].text.strip()] = eox_present[1].get('href')
+                    else:
                         eox_link['eox'][eox_present[0].text.strip()] = eox_present[0].get('href')
+            logging.debug("Category Search Completed for Type 1 Technology.")
             return [device_list, eox_link]
         else:
             device_list = {'series': {}}
             eox_link = {'eox': {}}
-            list = max(enumerate(bs4.BeautifulSoup(requests.get(f"{cisco_url}{category()['category'][tech]}").text, 'lxml').find_all("div", class_="col full")), key=lambda x: len(x[1]))[1].find_all('ul') # Enumerating and comparing values of series of length to find the appropriate column data
+            list = max(enumerate(bs4.BeautifulSoup(requests.get(f"{cisco_url}{tech}").text, 'lxml').find_all("div", class_="col full")), key=lambda x: len(x[1]))[1].find_all('ul') # Enumerating and comparing values of series of length to find the appropriate column data
             for devices in list:
                 for device in devices.find_all('li'):
                     eol = device.find("img")
@@ -56,27 +69,32 @@ def open_cat(tech: str):
                             eox_link['eox'][a_tag.text.strip()] = a_tag.get("href")
                         else:
                             device_list['series'][a_tag.text.strip()] = a_tag.get("href")    
+            logging.debug("Category Search Completed for Type 2 Technology.")
             return [device_list, eox_link]
     except Exception as e:
-        print(f'Error occurred {e}')
+        logging.error(f"An Error Occurred for opening Category!\n{e}")
         return None
 
 
 # Obtaining the next Link for EOX from the Product Page. 
 def eox_link_extract(link: str):
+    logging.info("Starting EOX Redirection Link retreival process.")
     try:
-        return bs4.BeautifulSoup(requests.get(f'{link}').text, 'lxml').find('table', class_="birth-cert-table").find("tr", class_="birth-cert-status").find('a').get('href')
+        logging.debug("EOX Redirection Link Completed Successfully!")
+        return bs4.BeautifulSoup(requests.get(f'{cisco_url}{link}').text, 'lxml').find('table', class_="birth-cert-table").find("tr", class_="birth-cert-status").find('a').get('href')
     except Exception as e:
-        print(f'Error occurred {e}')
+        logging.error(f"An Error Occurred for while retreiving EOX redirection Links!\n{e}")
         return None 
 # Possible integration to open_cat(x)
 
 
 # Obtaining a list EOX Links
+# Require Bug Fix to exclude software EOL
 def eox_details(link: str):
+    logging.info("Starting EOX Link retreival process.")
     urls = {}
     try:
-        for titles in bs4.BeautifulSoup(requests.get(f'{link}').text, 'lxml').find('ul', class_='listing').find_all('ul'):
+        for titles in bs4.BeautifulSoup(requests.get(f'{cisco_url}{link}').text, 'lxml').find('ul', class_='listing').find_all('ul'):
             title = titles.find('div', class_='heading')
             # Possibility 1 where English link seggregation is available in the WebPage
             if title and title.text == 'English':  
@@ -85,20 +103,21 @@ def eox_details(link: str):
                     urls[link.find('a').text.replace("End-of-Sale and End-of-Life Announcement for the Cisco ", "")] = link.find('a').get('href')
             # Possibility 2 where there is no seggregation of language in the WebPage
             for content in titles.find_all('a'):
-                if detect(content.text) == "en":  # If the link is not valid English. This link will not be selected. 
+                if detect(content.text) == "en":  # If the link is not valid English. This link will not be retreived. 
                     urls[content.text] = content.get('href')
         return urls
     except Exception as e:
-        print(f'Error occured {e}')
+        logging.error(f"An Error Occurred for while retreiving EOX Link!\n{e}")
         return None
-
+    
 
 # Obtaining EOX Details and Devices listed for EOX
 def eox_scrapping(link: str):
+    logging.info("Starting EOX data retreival process.")
     eox = {}
     devices = []
     try:
-        tables = bs4.BeautifulSoup(requests.get(f'{link}').text, 'lxml').find_all('table')
+        tables = bs4.BeautifulSoup(requests.get(f'{cisco_url}{link}').text, 'lxml').find_all('table')
         for section in tables[0].find('tbody').find_all('tr'):
             column = section.find_all('td')
             eox[column[0].text.strip()] = column[2].text.strip()
@@ -109,6 +128,5 @@ def eox_scrapping(link: str):
             devices.append(device_list.find('td').text.strip())
         return [eox, devices]
     except Exception as e:
-        print(f'Error occured {e}')
+        logging.error(f"An Error Occurred for while retreiving EOX data!\n{e}")
         return None
-
