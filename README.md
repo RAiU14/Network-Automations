@@ -2,7 +2,7 @@
 A set of python program files which can be used smartly and efficiently to make things easier! 
 
 >**Cisco_EOX.py**  
-> 🚨 **Cisco Support/EOX API inaccessible? We got you!**
+> Cisco Support/EOX API inaccessible? Use this WebScrapping Tool to obtain your details.
 >
 > **Goal:** To gather End-of-Life (EOX) details about for all Cisco device by passing the product/model number as input — using only **web scraping techniques** (no API required).
 >
@@ -12,8 +12,12 @@ A set of python program files which can be used smartly and efficiently to make 
 > This tool is **not affiliated with or endorsed by Cisco**. All data is sourced from publicly available information on Cisco’s website.  
 > I do **not take any responsibility** for how this tool is used — especially for **commercial purposes**, product sales, or automation in production environments. Use it at your own discretion and risk.  
 > Always validate EOX details directly from [Cisco's official website](https://www.cisco.com) before making any business decisions.
-> requirements.txt available.
-> [WIP. Everything is a function now and not a package.]
+> Use requirements.txt to install all the dependencies for the program to work.
+> [Complete Automation In Progress]
+> Something not working? Let me know!
+> Sample.py shows how you can use the program.
+
+![Screenshot](https://github.com/user-attachments/assets/f20ba7df-7c48-4884-9737-0c562fed54cb)
 
 >**Connection.py**  
 > Has the necessary snippet to connect to the network to run the netmiko commands.
