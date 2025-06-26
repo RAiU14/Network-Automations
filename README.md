@@ -32,7 +32,6 @@ A set of python program files which can be used smartly and efficiently to make 
 > Performing a simple OS check before pinging the device or devices. 
 > You can use the provided functions to simply check for their remote reachability status with or without the jumphost. 
 
-
 >**Database folder**
 > Created two files, Database.py and EOX.db
 > Database.py is coded to take input from the user, the user input is set as primary key.
@@ -44,5 +43,12 @@ A set of python program files which can be used smartly and efficiently to make 
 
 > Further edits staged to implement edit functionality in the CSV section.
 [WIP]
+
+**PM_Report folder**
+> Contails python scripts to gather Health parameters of Network applaince based on individual technology and vendor.
+> Currently, sripts are in phase 1 i.e., need further enhancement.
+> Provides basic information by analysing log data, and marks unavailable data as 'NA'
+>Further information will be available as the progression contunues - [WIP]
+
 
 Note: The .gitignore file have been created with the help of gitignore.io website
