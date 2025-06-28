@@ -42,7 +42,12 @@ print("Welcome to EOX Retreival!\nAvailable Technology:")
 technology = menu(category())
 device_list = menu(open_cat(technology))
 series_link = menu(device_list)
-redirection_link = eox_link_extract(series_link)
+search_result = eox_link_extract(series_link)
+if search_result[0] == True:
+    redirection_link = search_result[1]
+else:
+    print("This product is supported by Cisco, but is no longer sold.\n", search_result[1])
+    exit()
 eox_urls = eox_details(redirection_link)
 eox_link = menu(eox_urls)
 eox_data = eox_scrapping(eox_link)

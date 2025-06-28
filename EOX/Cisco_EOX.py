@@ -6,7 +6,7 @@ import datetime
 import os
 # Note: This program works as long as the product page from Cisco is not changed~~ 
 
-# Used for logging the file. 
+# Used for logging. 
 log_dir = os.path.join(os.path.dirname(__file__), "logs")
 os.makedirs(log_dir, exist_ok=True)
 logging.basicConfig(filename=os.path.join(log_dir,  f"EOX_{datetime.datetime.today().strftime('%Y-%m-%d')}.log"), level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -15,7 +15,7 @@ logging.basicConfig(filename=os.path.join(log_dir,  f"EOX_{datetime.datetime.tod
 cisco_url = "https://www.cisco.com"
 
 # This function returns all categories from the product page.
-def category():
+def category() -> dict[str, str]:
     logging.info("Starting category search process.")
     tech = {}
     title = bs4.BeautifulSoup(requests.get(f"{cisco_url}/c/en/us/support/all-products.html").text, 'lxml').find("h3", string="All Product and Technology Categories").find_next("table").find_all("a")
@@ -81,15 +81,27 @@ def eox_link_extract(link: str):
     logging.info("Starting EOX Redirection Link retreival process.")
     try:
         logging.debug("EOX Redirection Link Completed Successfully!")
-        return bs4.BeautifulSoup(requests.get(f'{cisco_url}{link}').text, 'lxml').find('table', class_="birth-cert-table").find("tr", class_="birth-cert-status").find('a').get('href')
+        product_data_table = bs4.BeautifulSoup(requests.get(f'{cisco_url}{link}').text, 'lxml').find('table', class_="birth-cert-table")
+        if product_data_table.find('div', class_='eol'):
+            EOL_data = {}
+            for item in product_data_table.find_all('tr'):
+                th = item.find("th")
+                td = item.find("td")
+                if not th or not td:
+                        continue
+                label = th.text.strip()
+                if label in ("End-of-Sale Date", "End-of-Support Date"):
+                    EOL_data[label] = td.text.strip()
+            return [False, EOL_data]
+        else:
+            EOX_Link = product_data_table.find("tr", class_="birth-cert-status").find('a').get('href')
+            return [True, EOX_Link]
     except Exception as e:
         logging.error(f"An Error Occurred for while retreiving EOX redirection Links!\n{e}")
         return None 
-# Possible integration to open_cat(x)
-# New condition found. Sometimes the redirection URL found from the product page might not be accurate. Checks for fixing 
 
 
-# Obtaining a list EOX Links
+# Obtaining a EOX Links
 def eox_details(link: str):
     logging.info("Starting EOX Link retreival process.")
     urls = {}
