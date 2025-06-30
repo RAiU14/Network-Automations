@@ -320,7 +320,7 @@ def WLC(path):
     print(temperature(path))
  
 if __name__ == '__main__':
-    path = "SVR135977300\PROD02MGMTSW04_172.16.1.20.txt"
+    path = "Test WLC 5508/10.119.138.3.txt"
 
     # Problems : model & serial number, memory , power
     # no issue with memory for 3500
@@ -337,13 +337,13 @@ if __name__ == '__main__':
     #       f'Free memory : ', memory(path)[2],'\n'
     #       f'Used memory Percentage : ', memory(path)[3])
 
-    print("Reload/Reboot reason : ", reboot_reason(path))
+    # print("Reload/Reboot reason : ", reboot_reason(path))
 
-    simple_values = ["System Name", "IP Address", "System Up Time", 
-                     "Product Version", "Current CPU", 
-                     "Fan Status"]
-    for item in simple_values:
-        print(f'{item} : ', line_matching(path, item))
+    # simple_values = ["System Name", "IP Address", "System Up Time", 
+    #                  "Product Version", "Current CPU", 
+    #                  "Fan Status"]
+    # for item in simple_values:
+    #     print(f'{item} : ', line_matching(path, item))
 
-    print(temperature(path))
+    # print(temperature(path))
     WLC(path)

@@ -192,7 +192,7 @@ class CiscoParser:
 
 
 def main():
-    file_path = "Log_samples\9800 WLC.txt"
+    file_path = "Log_samples\9800 WLC2.txt"
     parser = CiscoParser(file_path)
     
     try:
