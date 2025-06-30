@@ -3,19 +3,21 @@ import requests
 from langdetect import detect
 import logging
 import datetime
+from typing import List, Dict
 import os
+# Program to perform efficient Web-Scrapping
 # Note: This program works as long as the product page from Cisco is not changed~~ 
 
-# Used for logging the file. 
+# Used for logging. 
 log_dir = os.path.join(os.path.dirname(__file__), "logs")
 os.makedirs(log_dir, exist_ok=True)
-logging.basicConfig(filename=os.path.join(log_dir,  f"EOX_{datetime.datetime.today().strftime('%Y-%m-%d')}.log"), level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(filename=os.path.join(log_dir,  f"{datetime.datetime.today().strftime('%Y-%m-%d')}.log"), level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 cisco_url = "https://www.cisco.com"
 
 # This function returns all categories from the product page.
-def category():
+def category() -> dict[str, str]:
     logging.info("Starting category search process.")
     tech = {}
     title = bs4.BeautifulSoup(requests.get(f"{cisco_url}/c/en/us/support/all-products.html").text, 'lxml').find("h3", string="All Product and Technology Categories").find_next("table").find_all("a")
@@ -29,8 +31,8 @@ def category():
 
 
 # This function is used to obtain device series related links from the category.
-def open_cat(link: str):
-    logging.info("Starting category search process.")
+def open_cat(link: str) -> List[Dict[str, Dict[str, str]]]:
+    logging.info(f"Starting Device Gathering Process for category for URL: {cisco_url}{link}.")
     try:
         # The checks are mentioned as such based on the webpage layout as of date.
         link_check = bs4.BeautifulSoup(requests.get(f"{cisco_url}{link}").text, 'lxml').find(id="allSupportedProducts")
@@ -53,7 +55,7 @@ def open_cat(link: str):
                         eox_link['eox'][eox_present[0].text.strip()] = eox_present[0].get('href')
                     else:
                         eox_link['eox'][eox_present[0].text.strip()] = eox_present[0].get('href')
-            logging.debug("Category Search Completed for Type 1 Technology.")
+            logging.debug("Category Search Completed for Technology with seperate EOX list.")
             return [device_list, eox_link]
         else:
             device_list = {'series': {}}
@@ -69,28 +71,54 @@ def open_cat(link: str):
                             eox_link['eox'][a_tag.text.strip()] = a_tag.get("href")
                         else:
                             device_list['series'][a_tag.text.strip()] = a_tag.get("href")    
-            logging.debug("Category Search Completed for Type 2 Technology.")
+            logging.debug("Category Search Completed for Technology with EOS icons.")
             return [device_list, eox_link]
     except Exception as e:
-        logging.error(f"An Error Occurred for opening Category!\n{e}")
+        logging.error(f"An Error Occurred for opening Category URL: {cisco_url}{link}!\n{e}")
         return None
 
 
 # Obtaining the next Link for EOX from the Product Page. 
-def eox_link_extract(link: str):
-    logging.info("Starting EOX Redirection Link retreival process.")
+def eox_link_extract(link: str) -> List[bool, Dict[str, str]]:
+    logging.info(f"Starting EOX Redirection Link retreival process for URL: {cisco_url}{link}")
     try:
-        logging.debug("EOX Redirection Link Completed Successfully!")
-        return bs4.BeautifulSoup(requests.get(f'{cisco_url}{link}').text, 'lxml').find('table', class_="birth-cert-table").find("tr", class_="birth-cert-status").find('a').get('href')
+        logging.debug(f"EOX Redirection Link Completed Successfully!\nURL: {cisco_url}{link}!")
+        product_data_table = bs4.BeautifulSoup(requests.get(f'{cisco_url}{link}').text, 'lxml').find('table', class_="birth-cert-table")
+        if product_data_table.find('div', class_='eol'):
+            EOL_data = {}
+            for item in product_data_table.find_all('tr'):
+                th = item.find("th")
+                td = item.find("td")
+                if not th or not td:
+                        continue
+                label = th.text.strip()
+                if label in ("End-of-Sale Date", "End-of-Support Date"):
+                    EOL_data[label] = td.text.strip()
+            logging.debug(f"Device is still in support\nURL: {cisco_url}{link}")
+            return [False, EOL_data]
+        elif product_data_table.find('div', class_='eos'):
+            EOX_Link = product_data_table.find("tr", class_="birth-cert-status").find('a').get('href')
+            logging.debug(f"Link Extracted for URL: {cisco_url}{link}")
+            return [True, EOX_Link]
+        else:
+            EOL_data = {}
+            for item in product_data_table.find_all('tr'):
+                th = item.find("th")
+                td = item.find("td")
+                if not th or not td:
+                        continue
+                label = th.text.strip()
+                if label in ("Series Release Date"):
+                    EOL_data[label] = td.text.strip()
+            logging.debug(f"Device is still in support\nURL: {cisco_url}{link}")
+            return [False, EOL_data]
     except Exception as e:
         logging.error(f"An Error Occurred for while retreiving EOX redirection Links!\n{e}")
         return None 
-# Possible integration to open_cat(x)
-# New condition found. Sometimes the redirection URL found from the product page might not be accurate. Checks for fixing 
 
 
-# Obtaining a list EOX Links
-def eox_details(link: str):
+# Obtaining a EOX Links
+def eox_details(link: str) -> dict:
     logging.info("Starting EOX Link retreival process.")
     urls = {}
     try:
@@ -100,6 +128,7 @@ def eox_details(link: str):
                 if "Software" in text:
                     continue
                 else:
+                    logging.debug(f"EOX Link Retreived successfully!\nURL: {cisco_url}{link}")
                     urls[text.replace("End-of-Sale and End-of-Life Announcement for the Cisco ", "")] = links.find('a').get('href') 
         return urls
     except Exception as e:
@@ -108,7 +137,7 @@ def eox_details(link: str):
 
 
 # Obtaining EOX Details and Devices listed for EOX
-def eox_scrapping(link: str):
+def eox_scrapping(link: str) -> List[Dict[str, str], List[str]]:
     logging.info("Starting EOX data retreival process.")
     eox = {}
     devices = []

@@ -1,23 +1,22 @@
 # Cisco_Automations
 A set of python program files which can be used smartly and efficiently to make things easier! 
 
->**Cisco_EOX.py**  
-> Cisco Support/EOX API inaccessible? Use this WebScrapping Tool to obtain your details.
->
+>**Cisco EOX Package**  
+> A series of programs that will help you with your program without the need for API. 
+> Cisco EOX: WebScrapping Tool to obtain your details EOX Details for devices easily. (Faster than loading the WebPages!)
 > **Goal:** To gather End-of-Life (EOX) details about for all Cisco device by passing the product/model number as input — using only **web scraping techniques** (no API required).
->
 > ⚙️ This was developed purely as a **personal/learning project** to help automate tedious manual lookups and speed up engineering workflows.
->
 > ⚠️ **Disclaimer:**  
 > This tool is **not affiliated with or endorsed by Cisco**. All data is sourced from publicly available information on Cisco’s website.  
 > I do **not take any responsibility** for how this tool is used — especially for **commercial purposes**, product sales, or automation in production environments. Use it at your own discretion and risk.  
 > Always validate EOX details directly from [Cisco's official website](https://www.cisco.com) before making any business decisions.
 > Use requirements.txt to install all the dependencies for the program to work.
+> Cisco PID: A simple program tool to smartly figure out the device series and to check in the product page. 
 > [Complete Automation In Progress]
 > Something not working? Let me know!
-> Sample.py shows how you can use the program.
+> Sample.py shows how you can use both the program.
+![EOX Screenshot](https://github.com/user-attachments/assets/f20ba7df-7c48-4884-9737-0c562fed54cb)
 
-![Screenshot](https://github.com/user-attachments/assets/f20ba7df-7c48-4884-9737-0c562fed54cb)
 
 >**Connection.py**  
 > Has the necessary snippet to connect to the network to run the netmiko commands.
