@@ -11,10 +11,10 @@ A set of python program files which can be used smartly and efficiently to make 
 > I do **not take any responsibility** for how this tool is used — especially for **commercial purposes**, product sales, or automation in production environments. Use it at your own discretion and risk.  
 > Always validate EOX details directly from [Cisco's official website](https://www.cisco.com) before making any business decisions.
 > Use requirements.txt to install all the dependencies for the program to work.
-> Cisco PID: Cisco
+> Cisco PID: A simple program tool to smartly figure out the device series and to check in the product page. 
 > [Complete Automation In Progress]
 > Something not working? Let me know!
-> Sample.py shows how you can use the program.
+> Sample.py shows how you can use both the program.
 ![EOX Screenshot](https://github.com/user-attachments/assets/f20ba7df-7c48-4884-9737-0c562fed54cb)
 
 

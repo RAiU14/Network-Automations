@@ -1,5 +1,6 @@
 # This is an ideal scenario of how the program works currently. 
 from Cisco_EOX import *
+from Cisco_PID import *
 
 # A simple function to display obtained items as a menu driven function.
 def menu(data):
@@ -52,3 +53,27 @@ eox_urls = eox_details(redirection_link)
 eox_link = menu(eox_urls)
 eox_data = eox_scrapping(eox_link)
 print(eox_data)
+
+
+# Testing was performed where I as the user know that which technology the PID belongs! 
+if __name__ == "__main__":
+    All_Devices = open_cat('/c/en/us/support/wireless/index.html')
+    
+    pid = "AIR-AP2702E-UXBULK"
+    # pid = "AIR-AP2602E-UXBULK"
+    # pid = "9800"
+    # pid = "asdfkasdf"
+    
+    result = find_device_series_link(pid, All_Devices)
+    if result:
+        device_name, link = result
+        print(f"Matched Device: {device_name}\nURL: {link}")
+        eox_devices = eox_retreival(pid, link)
+        if eox_devices[0] == False:
+            print(f"Device Still in Support!\n{eox_devices[1]}")
+        else:
+            if pid in eox_devices[1]:
+                print("TRUE!")
+    else:
+        print("No link found for the detected series.")
+        
