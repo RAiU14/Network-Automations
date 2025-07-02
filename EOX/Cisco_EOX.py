@@ -79,7 +79,7 @@ def open_cat(link: str) -> List[Dict[str, Dict[str, str]]]:
 
 
 # Obtaining the next Link for EOX from the Product Page. 
-def eox_link_extract(link: str) -> List[bool, Dict[str, str]]:
+def eox_link_extract(link: str):
     logging.info(f"Starting EOX Redirection Link retreival process for URL: {cisco_url}{link}")
     try:
         logging.debug(f"EOX Redirection Link Completed Successfully!\nURL: {cisco_url}{link}!")
@@ -137,7 +137,7 @@ def eox_details(link: str) -> dict:
 
 
 # Obtaining EOX Details and Devices listed for EOX
-def eox_scrapping(link: str) -> List[Dict[str, str], List[str]]:
+def eox_scrapping(link: str):
     logging.info("Starting EOX data retreival process.")
     eox = {}
     devices = []

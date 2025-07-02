@@ -37,7 +37,7 @@ def get_possible_series(pid: str) -> List[str]:
 
 # This is going to be advanced method.
 # To compare it with the device list from the device category link. 
-def find_device_series_link(pid: str,all_devices: List[Dict[str, Dict[str, str]]]) -> Optional[List[str, str]]:
+def find_device_series_link(pid: str,all_devices: List[Dict[str, Dict[str, str]]]):
     try:
         series_candidates = get_possible_series(pid)
         logging.debug(f"Series candidates for '{pid}': {series_candidates}")
@@ -82,4 +82,27 @@ def eox_retreival(pid, link):
     except Exception as e:
         logging.error(f"An Error Occurred while retreving EOX for {pid}!\n{e}")
         return None
+        
+
+if __name__ == "__main__":
+    All_Devices = open_cat('/c/en/us/support/wireless/index.html')
+    
+    pid = "AIR-AP2702E-UXBULK"
+    # pid = "AIR-AP2602E-UXBULK"
+    # pid = "9800"
+    # pid = "asdfkasdf"
+    
+    result = find_device_series_link(pid, All_Devices)
+    if result:
+        device_name, link = result
+        print(f"Matched Device: {device_name}\nURL: {link}")
+        eox_devices = eox_retreival(pid, link)
+        if eox_devices[0] == False:
+            print(f"Device Still in Support!\n{eox_devices[1]}")
+        else:
+            if pid in eox_devices[1]:
+                print(eox_devices[0])
+                print("TRUE!")
+    else:
+        print("No link found for the detected series.")
         
