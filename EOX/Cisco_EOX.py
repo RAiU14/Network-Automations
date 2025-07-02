@@ -17,7 +17,7 @@ logging.basicConfig(filename=os.path.join(log_dir,  f"{datetime.datetime.today()
 cisco_url = "https://www.cisco.com"
 
 # This function returns all categories from the product page.
-def category() -> dict[str, str]:
+def category():
     logging.info("Starting category search process.")
     tech = {}
     title = bs4.BeautifulSoup(requests.get(f"{cisco_url}/c/en/us/support/all-products.html").text, 'lxml').find("h3", string="All Product and Technology Categories").find_next("table").find_all("a")
@@ -31,7 +31,7 @@ def category() -> dict[str, str]:
 
 
 # This function is used to obtain device series related links from the category.
-def open_cat(link: str) -> List[Dict[str, Dict[str, str]]]:
+def open_cat(link: str):
     logging.info(f"Starting Device Gathering Process for category for URL: {cisco_url}{link}.")
     try:
         # The checks are mentioned as such based on the webpage layout as of date.
@@ -79,7 +79,7 @@ def open_cat(link: str) -> List[Dict[str, Dict[str, str]]]:
 
 
 # Obtaining the next Link for EOX from the Product Page. 
-def eox_link_extract(link: str) -> List[bool, Dict[str, str]]:
+def eox_link_extract(link: str):
     logging.info(f"Starting EOX Redirection Link retreival process for URL: {cisco_url}{link}")
     try:
         logging.debug(f"EOX Redirection Link Completed Successfully!\nURL: {cisco_url}{link}!")
@@ -118,7 +118,7 @@ def eox_link_extract(link: str) -> List[bool, Dict[str, str]]:
 
 
 # Obtaining a EOX Links
-def eox_details(link: str) -> dict:
+def eox_details(link: str):
     logging.info("Starting EOX Link retreival process.")
     urls = {}
     try:
@@ -137,7 +137,7 @@ def eox_details(link: str) -> dict:
 
 
 # Obtaining EOX Details and Devices listed for EOX
-def eox_scrapping(link: str) -> List[Dict[str, str], List[str]]:
+def eox_scrapping(link: str):
     logging.info("Starting EOX data retreival process.")
     eox = {}
     devices = []
