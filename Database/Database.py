@@ -157,88 +157,137 @@ else :
 #############################################################################################################################################################################################################
 
 ## Trying the same in json method.
+# Necessary imports
 import json
 import os
 
-# File to store device lifecycle data
-filename = "EOX_details.json"
-
-# Load existing data or initialize empty dictionary
-if os.path.exists(filename) and os.path.getsize(filename) > 0:
-    with open(filename, "r") as file:
-        data = json.load(file)
-else:
-    data = {}
-
-# Predefined column names
-columns = [
-    "End_of_Life_Announcement_Date",
-    "End_of_Sale_Date_HW",
-    "Last_Ship_Date_HW",
-    "End_of_SW_Maintenance_Releases_Date_HW",
-    "End_of_Vulnerability_Security_Support_HW",
-    "End_of_Routine_Failure_Analysis_Date_HW",
-    "End_of_New_Service_Attachment_Date_HW",
-    "End_of_Service_Contract_Renewal_Date_HW",
-    "Last_Date_of_Support_HW"
-]
-
-# Add new device details
-def add_device_details(Device_Model, *details):
-    if len(details) != len(columns):
-        print("Error: Incorrect number of details provided.")
-        return
-
-    new_details = dict(zip(columns, details))
-
-    if Device_Model in data:
-        existing_details = data[Device_Model]
-        if existing_details == new_details:
-            print(f"Model '{Device_Model}' already exists with identical details.")
-            return
-        else:
-            for key in columns:
-                if existing_details.get(key) != new_details[key]:
-                    existing_details[key] = new_details[key]
-            data[Device_Model] = existing_details
-            with open(filename, "w") as file:
-                json.dump(data, file, indent=4)
-            print(f"Model '{Device_Model}' existed. Details updated.")
-            return
-
-    data[Device_Model] = new_details
-    with open(filename, "w") as file:
-        json.dump(data, file, indent=4)
-    print(f"Details for '{Device_Model}' added successfully.")
-
-# Retrieve device details
-def get_device_details(Device_Model):
-    if Device_Model in data:
-        print(f"\nModel: {Device_Model}")
-        for key, value in data[Device_Model].items():
-            print(f"{key}: {value}")
+# Function to verify the existence of a JSON file corresponding to a given series, or create it if it does not exist :
+def container(series):
+    filename = f"{series}.json"
+    if os.path.exists(filename):
+        print("File exists, enter details : \n")
+        container_input(series)
     else:
-        print("Model not found.")
+        with open(filename, "w") as file:
+            print("Created new file, enter details : \n")
+            container_input(series)
 
-# Edit a specific field for a given device model
-def edit_device_detail(Device_Model, column_name, new_value):
-    if Device_Model not in data:
-        print(f"Model '{Device_Model}' not found. Cannot update.")
-        return
+# Function to input EOX details :     
+def container_input(series):
+        eox = input("EOX : ")
+        eox_dict = dict(item.split(":") for item in eox.split(","))
+        pid = input("PID : ").split(",")
+        container_write(series, eox_dict, pid)   
 
-    if column_name not in columns:
-        print(f"Invalid column name: '{column_name}'.")
-        print("Valid columns are:")
-        for col in columns:
-            print(f"- {col}")
-        return
-
-    data[Device_Model][column_name] = new_value
+# Function to write values to JSON file :        
+def container_write(series, eox, pid):
+    data = {
+        "series": series,
+        "eox": eox,
+        "pid": pid
+    }
+    
+    filename = f"{series}.json"
     with open(filename, "w") as file:
         json.dump(data, file, indent=4)
-    print(f"Updated '{column_name}' for model '{Device_Model}' to '{new_value}'.")
+    print("Data input complete")     
+    
+# Function to read values from JSON file :           
+def container_read(series):   
+    filename = f"{series}.json"   
+    with open(filename, "r") as file:      
+        data = json.load(file)
+        print("EOX_Data = ", json.dumps(data, indent=4), "\n")
+        print("Series = ", data["series"])
+        print("EOX = ", data["eox"])
+        print("PID = ", data["pid"])        
+
+########################################################
+
+# Previous method, non dynamic :
+
+# import json
+# import os
+
+# # File to store device lifecycle data
+# filename = "EOX_details.json"
+
+# # Load existing data or initialize empty dictionary
+# if os.path.exists(filename) and os.path.getsize(filename) > 0:
+#     with open(filename, "r") as file:
+#         data = json.load(file)
+# else:
+#     data = {}
+
+# # Predefined column names
+# columns = [
+#     "End_of_Life_Announcement_Date",
+#     "End_of_Sale_Date_HW",
+#     "Last_Ship_Date_HW",
+#     "End_of_SW_Maintenance_Releases_Date_HW",
+#     "End_of_Vulnerability_Security_Support_HW",
+#     "End_of_Routine_Failure_Analysis_Date_HW",
+#     "End_of_New_Service_Attachment_Date_HW",
+#     "End_of_Service_Contract_Renewal_Date_HW",
+#     "Last_Date_of_Support_HW"
+# ]
+
+# # Add new device details
+# def add_device_details(Device_Model, *details):
+#     if len(details) != len(columns):
+#         print("Error: Incorrect number of details provided.")
+#         return
+
+#     new_details = dict(zip(columns, details))
+
+#     if Device_Model in data:
+#         existing_details = data[Device_Model]
+#         if existing_details == new_details:
+#             print(f"Model '{Device_Model}' already exists with identical details.")
+#             return
+#         else:
+#             for key in columns:
+#                 if existing_details.get(key) != new_details[key]:
+#                     existing_details[key] = new_details[key]
+#             data[Device_Model] = existing_details
+#             with open(filename, "w") as file:
+#                 json.dump(data, file, indent=4)
+#             print(f"Model '{Device_Model}' existed. Details updated.")
+#             return
+
+#     data[Device_Model] = new_details
+#     with open(filename, "w") as file:
+#         json.dump(data, file, indent=4)
+#     print(f"Details for '{Device_Model}' added successfully.")
+
+# # Retrieve device details
+# def get_device_details(Device_Model):
+#     if Device_Model in data:
+#         print(f"\nModel: {Device_Model}")
+#         for key, value in data[Device_Model].items():
+#             print(f"{key}: {value}")
+#     else:
+#         print("Model not found.")
+
+# # Edit a specific field for a given device model
+# def edit_device_detail(Device_Model, column_name, new_value):
+#     if Device_Model not in data:
+#         print(f"Model '{Device_Model}' not found. Cannot update.")
+#         return
+
+#     if column_name not in columns:
+#         print(f"Invalid column name: '{column_name}'.")
+#         print("Valid columns are:")
+#         for col in columns:
+#             print(f"- {col}")
+#         return
+
+#     data[Device_Model][column_name] = new_value
+#     with open(filename, "w") as file:
+#         json.dump(data, file, indent=4)
+#     print(f"Updated '{column_name}' for model '{Device_Model}' to '{new_value}'.")
     
 
-# add_device_details("xyz", "1", "2", "3", "4", "5", "6", "7", "8", "NA")
-# get_device_details("xyz")
-# edit_device_detail("xyz", "Last_Date_of_Support_HW", "10")
+# # add_device_details("xyz", "1", "2", "3", "4", "5", "6", "7", "8", "NA")
+# # get_device_details("xyz")
+# # edit_device_detail("xyz", "Last_Date_of_Support_HW", "10")
