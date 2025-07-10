@@ -4,8 +4,11 @@ from langdetect import detect
 import logging
 import datetime
 import os
+import re
 # Program to perform efficient Web-Scrapping
 # Note: This program works as long as the product page from Cisco is not changed~~ 
+
+start = datetime.datetime.now()
 
 # Used for logging. 
 log_dir = os.path.join(os.path.dirname(__file__), "logs")
@@ -27,21 +30,22 @@ def category() -> dict[str, str]:
     logging.debug("Category Search Completed.")
     return tech
 
-# Logging for below function is pending. 
 # This function is used to check the links if permissible and if any necessary changes are required. 
-def link_check(link: str):
+def link_check(link: str) -> str:
     new_link = link
-    for url in [cisco_url, "https://www.cisco.com", "//www.cisco.com"]:
+    for url in [cisco_url, "https://www.cisco.com", "//www.cisco.com", "https://cisco.com"]:
         if url in link: 
             new_link = link.replace(url, '')
+            logging.debug(f"Link {link} is valid and changed to {new_link}.")
     for bad_url in ["https://help.", "https://supportforums."]:
         if bad_url in link:
             new_link = False
+            logging.debug(f"Link {link} is not valid and not passed.")
     return new_link
 
 
 # This function is used to obtain device series related links from the category.
-def open_cat(link: str) -> List[Dict[str, Dict[str, str]]]:
+def open_cat(link: str) -> list[dict[str, dict[str, str]]]:
     logging.info(f"Starting Device Gathering Process for category for URL: {cisco_url}{link}.")
     try:
         # The checks are mentioned as such based on the webpage layout as of date.
@@ -70,7 +74,7 @@ def open_cat(link: str) -> List[Dict[str, Dict[str, str]]]:
                 return [device_list, eox_link]
             else:
                 pass
-            logging.debug("Category Search Completed for Technology without available EOX list in the WebPage.")
+            logging.debug("Category Search Completed for Technology without available EOX list in the WebPage. Category 1")
             return [device_list]
         elif list.find(id="allDevices"):
             devices_present = list.find(id="allDevices").find(id="alphabetical")
@@ -106,23 +110,42 @@ def open_cat(link: str) -> List[Dict[str, Dict[str, str]]]:
                                 links = link_check(links)
                                 if name and links:
                                     device_list['series'][name] = links 
-            logging.debug("Category Search Completed for Technology without available EOX list in WebPage. Category 2. This might get additional overview details as well.")
+            logging.debug("Category Search Completed for Technology without available EOX list in WebPage. Category 1 - This might get additional overview details as well.")
             return [device_list]
         elif max(enumerate(list.find_all("div", class_="col full")), key=lambda x: len(x[1]))[1].find_all('ul'):
-            # Enumerating and comparing values of series of length to find the appropriate column data
-            for devices in max(enumerate(list.find_all("div", class_="col full")), key=lambda x: len(x[1]))[1].find_all('ul'):  
-                for device in devices.find_all('li'):
-                    eol = device.find("img")
-                    alt_text = eol.get("alt") if eol else None
-                    a_tag = device.find("a")
-                    if a_tag:
-                        if alt_text == "End of Support" or alt_text == "End of Sale":
-                            eox_link['eox'][a_tag.text.strip()] = a_tag.get("href")
-                        else:
-                            device_list['series'][a_tag.text.strip()] = a_tag.get("href")    
-            logging.debug("Category Search Completed for Technology with EOS icons.")
-            return [device_list, eox_link]
-        # WIP
+            if list.find_all('div', class_='productContainers'):
+                for product in list.find_all('div', class_='productContainers'):
+                    for devices in product.find_all('a'):
+                        name = re.sub(r'\s+', ' ', devices.text.strip()).strip()
+                        links = devices.get('href')
+                        links = link_check(links)
+                        if name and links:
+                            device_list['series'][name] = links
+                logging.debug("Category Search Completed for Technology without available EOX list in WebPage. Category 2 - Which have images.")
+                return [device_list]
+            # Enumerating and comparing values of series of length to find the appropriate column data. [Above line was shortened using AI for faster execution.]
+            elif list.find('div', class_='tech-container'):
+                for product in list.find('div', class_='tech-container').find('div', class_="col").find_all('a'):
+                    name = product.text.strip()
+                    links = product.get('href')
+                    links = link_check(links)
+                    if name and links:
+                        device_list['series'][name] = links
+                logging.debug("Category Search Completed for Technology without available EOX list in WebPage. Category 3 - Simple list of multiple devices.")
+                return [device_list]
+            else:
+                for devices in max(enumerate(list.find_all("div", class_="col full")), key=lambda x: len(x[1]))[1].find_all('ul'):  
+                    for device in devices.find_all('li'):
+                        eol = device.find("img")
+                        alt_text = eol.get("alt") if eol else None
+                        a_tag = device.find("a")
+                        if a_tag:
+                            if alt_text == "End of Support" or alt_text == "End of Sale":
+                                eox_link['eox'][a_tag.text.strip()] = a_tag.get("href")
+                            else:
+                                device_list['series'][a_tag.text.strip()] = a_tag.get("href")    
+                logging.debug("Category Search Completed for Technology with EOS icons.")
+                return [device_list, eox_link]
         else: 
             divs = list.find_all('div', attrs = {"class": True}, recursive=True, limit=None)
             exact_col_divs = [div for div in divs if div.get('class') == ['col']]
@@ -148,11 +171,10 @@ def open_cat(link: str) -> List[Dict[str, Dict[str, str]]]:
                             links = link_check(links)
                             if name and links:
                                 device_list['series'][name] = links 
-            logging.debug("Category Search Completed for Technology without available EOX list in WebPage. Category 2. This might get additional overview details as well.")
+            logging.debug("Category Search Completed for Technology without available EOX list in WebPage. Category 4 - This might get additional overview details as well.")
             return [device_list]
     except Exception as e:
         logging.error(f"An Error Occurred for opening Category URL: {cisco_url}{link}!\n{e}")
-        print(f"Error {e}")
         return None
 
 
@@ -234,24 +256,3 @@ def eox_scrapping(link: str) -> list[dict[str, str], list[str]]:
     except Exception as e:
         logging.error(f"An Error Occurred for while retreiving EOX data!\n{e}")
         return None
-
-
-# def obtain():
-#     categories = category()
-#     for link in categories.keys():
-#         devices = open_cat(categories[link])
-#         print(link, devices)
-#     return
-
-# obtain()
-
-
-def test():
-    link = "/c/en/us/tech/index.html"
-    # Working on this and below this
-    # link = "/c/en/us/support/smb/product-support/small-business.html"
-    list = open_cat(link)
-    print(list)
-    return
-
-test()
