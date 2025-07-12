@@ -46,7 +46,7 @@ print("Welcome to EOX Retreival!\nAvailable Technology:")
 technology = menu(category())
 device_list = menu(open_cat(technology))
 series_link = menu(device_list)
-search_result = eox_link_extract(series_link)
+search_result = eox_check(series_link)
 if search_result[0] == True:
     redirection_link = search_result[1]
 else:
