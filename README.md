@@ -16,7 +16,7 @@ A set of python program files which can be used smartly and efficiently to make 
 > Use requirements.txt to install all the dependencies for the program to work.
 > Cisco PID: A simple program tool to smartly figure out the device series and to check in the product page. 
 > [Complete Automation In Progress]
-> Known Failure for Device: Cisco ONS 15454 SONET Multiservice Provisioning Platform (MSPP)
+> Known Failure for Device: Cisco Nexus 1000V Switch for VMware vSphere
 > For some reason, this is the only page which is different in entire Cisco Domain. 
 > Something not working? Let me know!
 > Sample.py shows how you can use both the program. 

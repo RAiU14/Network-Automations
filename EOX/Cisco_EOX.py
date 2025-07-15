@@ -228,7 +228,7 @@ def eox_check(link: str) -> list[bool, dict[str, str]]:
         logging.error(f"An Error Occurred for while retreiving EOX redirection Links!\n{e}")
         return None 
 
-# Known Failure for Device: Cisco ONS 15454 SONET Multiservice Provisioning Platform (MSPP)
+# Known Failure for Device: Cisco Nexus 1000V Switch for VMware vSphere
 # For some reason, this is the only page which is different in entire Cisco Domain. 
 
 # Obtaining a EOX Links

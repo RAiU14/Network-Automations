@@ -2,22 +2,30 @@
 # WIP
 
 from EOX.Cisco_EOX import *
-import datetime
+from .json_fun import *
 
-start = print(f"Started: {datetime.datetime.now()}")
 
 def obtain():
     all_available_devices, all_devices, eox_devices, eox_links, eox_data = {}, {}, {}, {}, {}
     categories = category()
     for link in categories.keys():
         all_available_devices[link] = open_cat(categories[link])
-    # All available device details are stored in form of dictionary. 
+    
+    device_names = []
+    for devices in all_available_devices.values():
+        for device in devices:
+            if device['series'] not in device_names:
+                device_names.append(device['series'])
+    saver(all_available_devices, "devices_technology.json")
+    # Saving all the available device information. 
+    exit()
+    
     for key in all_available_devices.keys():
         if len(all_available_devices[key]) == 1:
             # Only Device List Available:
             all_devices[key] = all_available_devices[key][0]['series']
         else:
-            # Both Device List and EOX are available. 
+            # Both Device List and EOX Link are available. 
             all_devices[key] = all_available_devices[key][0]['series']
             eox_devices[key] = all_available_devices[key][1]['eox']
     
@@ -35,7 +43,31 @@ def obtain():
                 
     print("\n\n\nEOX Links:\n", eox_links, "\n\n\nEOX Data:\n", eox_data)
 
+# Code block to retreieve all the devices by Cisco which has URL details
+def device_list():
+    all_available_devices, all_devices, eox_devices = {}, {}, {}
+    categories = category()
+    for link in categories.keys():
+        all_available_devices[link] = open_cat(categories[link])
+    
+    for key in all_available_devices.keys():
+        if len(all_available_devices[key]) == 1:
+            # Only Device List Available:
+            all_devices[key] = list(all_available_devices[key][0]['series'].keys())
+        else:
+            # Both Device List and EOX are available. 
+            all_devices[key] = list(all_available_devices[key][0]['series'].keys())
+            eox_devices[key] = list(all_available_devices[key][1]['eox'].keys())
+        
+    device_names = {}
+    for key in set(all_devices.keys()).union(eox_devices.keys()):
+        values = []
+        if key in all_devices:
+            values.extend(all_devices[key])
+        if key in eox_devices:
+            values.extend(eox_devices[key])
+        device_names[key] = values
+    
+    saver(device_names, "all_available_devices.json")
 
-print(obtain())
-end = print(f"Finished Execution at {datetime.datetime.now()}")
-print(f"Total Time Taken: {start - end}")
+device_list()
