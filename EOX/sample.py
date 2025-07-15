@@ -1,3 +1,6 @@
+# This requires additional changes post Bug Fix
+# Testing & Bug Fix in progress
+# Currently using Database\auto_pop.py as sample.py 
 # This is an ideal scenario of how the program works currently. 
 from Cisco_EOX import *
 from Cisco_PID import *
@@ -43,7 +46,7 @@ print("Welcome to EOX Retreival!\nAvailable Technology:")
 technology = menu(category())
 device_list = menu(open_cat(technology))
 series_link = menu(device_list)
-search_result = eox_link_extract(series_link)
+search_result = eox_check(series_link)
 if search_result[0] == True:
     redirection_link = search_result[1]
 else:

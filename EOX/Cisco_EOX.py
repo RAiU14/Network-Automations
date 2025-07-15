@@ -8,8 +8,6 @@ import re
 # Program to perform efficient Web-Scrapping
 # Note: This program works as long as the product page from Cisco is not changed~~ 
 
-start = datetime.datetime.now()
-
 # Used for logging. 
 log_dir = os.path.join(os.path.dirname(__file__), "logs")
 os.makedirs(log_dir, exist_ok=True)
@@ -40,7 +38,7 @@ def link_check(link: str) -> str:
     for bad_url in ["https://help.", "https://supportforums."]:
         if bad_url in link:
             new_link = False
-            logging.debug(f"Link {link} is not valid and not passed.")
+            logging.warning(f"Link {link} is not valid, hence not passed.")
     return new_link
 
 
@@ -96,8 +94,7 @@ def open_cat(link: str) -> list[dict[str, dict[str, str]]]:
                         if name and links:
                             device_list['series'][name] = links
                 else:
-                    each_item = []
-                    data = []
+                    each_item, data = [], []
                     for tags in exact_col_divs:
                         each_item.append(tags.find_all('a'))
                     for item in each_item:
@@ -141,9 +138,11 @@ def open_cat(link: str) -> list[dict[str, dict[str, str]]]:
                         a_tag = device.find("a")
                         if a_tag:
                             if alt_text == "End of Support" or alt_text == "End of Sale":
-                                eox_link['eox'][a_tag.text.strip()] = a_tag.get("href")
+                                link = link_check(a_tag.get("href"))
+                                eox_link['eox'][a_tag.text.strip()] = link
                             else:
-                                device_list['series'][a_tag.text.strip()] = a_tag.get("href")    
+                                link = link_check(a_tag.get("href"))
+                                device_list['series'][a_tag.text.strip()] = link
                 logging.debug("Category Search Completed for Technology with EOS icons.")
                 return [device_list, eox_link]
         else: 
@@ -157,8 +156,7 @@ def open_cat(link: str) -> list[dict[str, dict[str, str]]]:
                     if name and links:
                         device_list['series'][name] = links
             else:
-                each_item = []
-                data = []
+                each_item, data = [], []
                 for tags in exact_col_divs:
                     each_item.append(tags.find_all('a'))
                 for item in each_item:
@@ -178,13 +176,13 @@ def open_cat(link: str) -> list[dict[str, dict[str, str]]]:
         return None
 
 
-# Obtaining the next Link for EOX from the Product Page. 
-def eox_link_extract(link: str) -> list[bool, dict[str, str]]:
+# Checking if EOX is available for selective URL pages.
+def eox_check(link: str) -> list[bool, dict[str, str]]:
     logging.info(f"Starting EOX Redirection Link retreival process for URL: {cisco_url}{link}")
     try:
         logging.debug(f"EOX Redirection Link Completed Successfully!\nURL: {cisco_url}{link}!")
         product_data_table = bs4.BeautifulSoup(requests.get(f'{cisco_url}{link}').text, 'lxml').find('table', class_="birth-cert-table")
-        if product_data_table.find('div', class_='eol'):
+        if product_data_table.find(class_='eol'):
             EOL_data = {}
             for item in product_data_table.find_all('tr'):
                 th = item.find("th")
@@ -192,15 +190,28 @@ def eox_link_extract(link: str) -> list[bool, dict[str, str]]:
                 if not th or not td:
                         continue
                 label = th.text.strip()
-                if label in ("End-of-Sale Date", "End-of-Support Date"):
+                if label in ("Series Release Date", "End-of-Sale Date", "End-of-Support Date"):
                     EOL_data[label] = td.text.strip()
             logging.debug(f"Device is still in support\nURL: {cisco_url}{link}")
             return [False, EOL_data]
-        elif product_data_table.find('div', class_='eos'):
-            EOX_Link = {}
-            EOX_Link['URL'] = product_data_table.find("tr", class_="birth-cert-status").find('a').get('href')
-            logging.debug(f"Link Extracted for URL: {cisco_url}{link}")
-            return [True, EOX_Link]
+        elif product_data_table.find(class_='eos'):
+            url = product_data_table.find("tr", class_="birth-cert-status").find('a')
+            if url:
+                link = link_check(url.get('href'))
+                logging.debug(f"EOX Link available and extracted with URL: {cisco_url}{link}")
+                return [True, link]
+            else:
+                EOL_data = {}
+                for item in product_data_table.find_all('tr'):
+                    th = item.find("th")
+                    td = item.find("td")
+                    if not th or not td:
+                            continue
+                    label = th.text.strip()
+                    if label in ("Series Release Date", "End-of-Sale Date", "End-of-Support Date"):
+                        EOL_data[label] = td.text.strip()
+                logging.debug(f"Device is out of support and EOX link is unavailable!\nURL: {cisco_url}{link}")
+                return [False, EOL_data]
         else:
             EOL_data = {}
             for item in product_data_table.find_all('tr'):
@@ -209,14 +220,16 @@ def eox_link_extract(link: str) -> list[bool, dict[str, str]]:
                 if not th or not td:
                         continue
                 label = th.text.strip()
-                if label in ("Series Release Date"):
+                if label in ("Series Release Date", "End-of-Sale Date", "End-of-Support Date"):
                     EOL_data[label] = td.text.strip()
-            logging.debug(f"Device is still in support\nURL: {cisco_url}{link}")
+            logging.debug(f"Device is still in support and EOX is not accounced.\nURL: {cisco_url}{link}")
             return [False, EOL_data]
     except Exception as e:
         logging.error(f"An Error Occurred for while retreiving EOX redirection Links!\n{e}")
         return None 
 
+# Known Failure for Device: Cisco Nexus 1000V Switch for VMware vSphere
+# For some reason, this is the only page which is different in entire Cisco Domain. 
 
 # Obtaining a EOX Links
 def eox_details(link: str) -> dict:
