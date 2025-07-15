@@ -1,7 +1,7 @@
 import re
 import logging
 from typing import List, Dict, Optional
-from Cisco_EOX import *  
+from .Cisco_EOX import *
 # This is a simple program to 
 # Note: This only works for PIDs with series or numerical value. 
 
@@ -9,7 +9,7 @@ from Cisco_EOX import *
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # To get a possible series
-def get_possible_series(pid: str) -> List[str]:
+def get_possible_series(pid: str):
     try:
         numbers = re.search(r'(\d+)', pid)  # Getting only digits
         if not numbers:
@@ -37,7 +37,7 @@ def get_possible_series(pid: str) -> List[str]:
 
 # This is going to be advanced method.
 # To compare it with the device list from the device category link. 
-def find_device_series_link(pid: str,all_devices: List[Dict[str, Dict[str, str]]]) -> Optional[List[str, str]]:
+def find_device_series_link(pid: str, all_devices: List[Dict[str, Dict[str, str]]]):
     try:
         series_candidates = get_possible_series(pid)
         logging.debug(f"Series candidates for '{pid}': {series_candidates}")

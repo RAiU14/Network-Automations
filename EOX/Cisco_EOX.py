@@ -17,7 +17,7 @@ logging.basicConfig(filename=os.path.join(log_dir,  f"{datetime.datetime.today()
 cisco_url = "https://www.cisco.com"
 
 # This function returns all categories from the product page.
-def category() -> dict[str, str]:
+def category():
     logging.info("Starting category search process.")
     tech = {}
     for link in bs4.BeautifulSoup(requests.get(f"{cisco_url}/c/en/us/support/all-products.html").text, 'lxml').find("h3", string="All Product and Technology Categories").find_next("table").find_all("a"):
@@ -232,7 +232,7 @@ def eox_check(link: str) -> list[bool, dict[str, str]]:
 # For some reason, this is the only page which is different in entire Cisco Domain. 
 
 # Obtaining a EOX Links
-def eox_details(link: str) -> dict:
+def eox_details(link: str):
     logging.info("Starting EOX Link retreival process.")
     urls = {}
     try:
