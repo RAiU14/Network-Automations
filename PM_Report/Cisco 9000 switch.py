@@ -1,4 +1,7 @@
 import re
+import pathlib
+import pprint
+import os
 
 def extract_data(log_file):
     try:
@@ -15,7 +18,7 @@ def extract_data(log_file):
             "CPU Utilization": re.search(r"CPU utilization for five seconds:\s+(\d+)%", log_data).group(1) + "%" if re.search(r"CPU utilization for five seconds:\s+(\d+)%", log_data) else None,
         }
 
-        memory_match = re.search(r"Total\(b\)\s+(\d+)\s+Used\(b\)\s+(\d+)\s+Free\(b\)\s+(\d+)", log_data)
+        memory_match = re.search(r"Processor\s+\S+\s+(\d+)\s+(\d+)\s+(\d+)", log_data)
         if memory_match:
             total = int(memory_match.group(1))
             used = int(memory_match.group(2))
@@ -32,7 +35,7 @@ def extract_data(log_file):
         if flash_match:
             total = int(flash_match.group(1))
             free = int(flash_match.group(2))
-            used = total - free
+            used = total - free 
             utilization = (used / total) * 100
             data["Flash"] = {
                 "Total flash memory": total,
@@ -50,19 +53,63 @@ def extract_data(log_file):
     except FileNotFoundError:
         print("File not found.")
         return None
+    
+
+
+def travese_through_multiple_file(directory_path):
+    data = {}
+    for filename in os.listdir(directory_path):
+        if filename.endswith('.txt'): # Process only .txt files, for example
+            log_file = os.path.join(directory_path, filename)
+            vaules = extract_data(log_file)
+            data.update(vaules) 
+            # print(data) 
+        return data
+
+def get_file_names(directory_path):
+    try:
+        # Get a list of all files in the directory
+        file_names = [file for file in os.listdir(directory_path) if os.path.isfile(os.path.join(directory_path, file))]
+        return file_names
+    except FileNotFoundError:
+        print(f"Directory '{directory_path}' not found.")
+        return []
+    except Exception as e:
+        print(f"An error occurred: {str(e)}")
+        return []  
 
 def main():
-    log_file = r"Log_samples\3650 switch.txt"
-    data = extract_data(log_file)
+    # for a single file.
+    # log_file = r"C:\Users\girish.n\Downloads\SVR137436091\UOBM-C9200-BKM-OA-01_10.58.32.10.txt"
+    # data = extract_data(log_file)
+    # pprint.pp(data)
 
-    if data:
-        for key, value in data.items():
-            if isinstance(value, dict):
-                print(f"{key}:")
-                for k, v in value.items():
-                    print(f"  {k}: {v}")
-            else:
-                print(f"{key}: {value}")
+    directory_path = r"C:\Users\girish.n\Downloads\SVR137436091\9200"
+    file_names = get_file_names(directory_path)
+    # r = "Temp\\" + file_names[0]
+    # print(r)
+
+    for item in file_names:
+        # temp = extract_data(r"C:\Users\girish.n\Downloads\SVR137436091\UOBM-C9200-BKM-CCTV-01_10.58.35.2.txt")
+        data = extract_data(os.path.join(directory_path, item))
+        print(item)
+        pprint.pp(data)
+        print("\n\n")
+        input("Press Enter to continue to the next file...")
+
+    # #for bulk files.
+    # directory_path = r"C:\Users\girish.n\Downloads\SVR137436091"
+    # data = travese_through_multiple_file(directory_path)
+    # pprint.pp(data)
+
+    # if data:
+    #     for key, value in data.items():
+    #         if isinstance(value, dict):
+    #             print(f"{key}:")
+    #             for k, v in value.items():
+    #                 print(f"  {k}: {v}")
+    #         else:
+    #             print(f"{key}: {value}")
 
 if __name__ == "__main__":
     main()

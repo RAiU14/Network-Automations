@@ -206,7 +206,7 @@ def analyze_fortigate_logs(log_content):
 if __name__ == "__main__":
     # Load the complete log file content
     try:
-        with open('PM_Report\Log_samples\BR-DR-EXT-3PT01(10.11.90.21).txt', 'r') as f:
+        with open('Log_samples\FortiGate-1801F.txt', 'r') as f:
             full_log_content = f.read()
     except FileNotFoundError:
         print("Error: 'BR-DR-EXT-3PT01(10.11.90.21).txt' not found.")
