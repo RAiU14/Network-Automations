@@ -57,8 +57,8 @@ A program to automatically retreive all available data from Cisco Portal.
 > Contails python scripts to gather Health parameters of Network applaince based on individual technology and vendor.
 > Currently, sripts are in phase 1 i.e., need further enhancement.
 > Provides basic information by analysing log data, and marks unavailable data as 'NA'
->Further information will be available as the progression contunues - [WIP]
-
+> Further information will be available as the progression contunues - [WIP]
+> what si working? known errors? what is pending?
 
 
 
