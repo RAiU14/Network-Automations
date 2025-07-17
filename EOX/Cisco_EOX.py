@@ -38,7 +38,7 @@ def link_check(link: str) -> str:
     for bad_url in ["https://help.", "https://supportforums."]:
         if bad_url in link:
             new_link = False
-            logging.warning(f"Link {link} is not valid, hence not passed.")
+            logging.warning(f"Link {link} is invalid, hence not passed.")
     return new_link
 
 
@@ -177,14 +177,22 @@ def open_cat(link: str) -> list[dict[str, dict[str, str]]]:
 
 
 # Checking if EOX is available for selective URL pages.
+# New option required - to check and view PID if no link is available. 
 def eox_check(link: str) -> list[bool, dict[str, str]]:
     logging.info(f"Starting EOX Redirection Link retreival process for URL: {cisco_url}{link}")
     try:
         logging.debug(f"EOX Redirection Link Completed Successfully!\nURL: {cisco_url}{link}!")
-        product_data_table = bs4.BeautifulSoup(requests.get(f'{cisco_url}{link}').text, 'lxml').find('table', class_="birth-cert-table")
-        if product_data_table.find(class_='eol'):
+        product_data_table = bs4.BeautifulSoup(requests.get(f'{cisco_url}{link}').text, 'lxml').find_all('table', class_="birth-cert-table")
+        if len(product_data_table) >= 2:
+            index_value = 1
+            if len(product_data_table[index_value].find_all('th')) == 0:
+                index_value = 0
+        else:
+            index_value = 0
+        if product_data_table[index_value].find(class_='eol'):
             EOL_data = {}
-            for item in product_data_table.find_all('tr'):
+            url = product_data_table[index_value].find("tr", class_="birth-cert-status").find('a')
+            for item in product_data_table[index_value].find_all('tr'):
                 th = item.find("th")
                 td = item.find("td")
                 if not th or not td:
@@ -193,16 +201,36 @@ def eox_check(link: str) -> list[bool, dict[str, str]]:
                 if label in ("Series Release Date", "End-of-Sale Date", "End-of-Support Date"):
                     EOL_data[label] = td.text.strip()
             logging.debug(f"Device is still in support\nURL: {cisco_url}{link}")
-            return [False, EOL_data]
-        elif product_data_table.find(class_='eos'):
-            url = product_data_table.find("tr", class_="birth-cert-status").find('a')
             if url:
                 link = link_check(url.get('href'))
-                logging.debug(f"EOX Link available and extracted with URL: {cisco_url}{link}")
-                return [True, link]
+                EOL_data['url'] = link
+                logging.debug(f"EOX Link available for EOL device and extracted with URL: {cisco_url}{link}")
+                return [True, EOL_data]
+            else:   
+                logging.debug(f"EOX Link unavailable for EOL device hence extracted dates from URL: {cisco_url}{link}")
+                return [False, EOL_data]
+        elif product_data_table[index_value].find(class_='eos'):
+            url = product_data_table[index_value].find("tr", class_="birth-cert-status").find('a')
+            if url:
+                link = link_check(url.get('href'))
+                if link:
+                    logging.debug(f"EOX Link available and extracted with URL: {cisco_url}{link}")
+                    return [True, {'url': link}]
+                else:
+                    EOL_data = {}
+                    for item in product_data_table[index_value].find_all('tr'):
+                        th = item.find("th")
+                        td = item.find("td")
+                        if not th or not td:
+                                continue
+                        label = th.text.strip()
+                        if label in ("Series Release Date", "End-of-Sale Date", "End-of-Support Date"):
+                            EOL_data[label] = td.text.strip()
+                    logging.debug(f"Device is out of support and EOX link is unavailable! Category 1\nURL: {cisco_url}{link}")
+                    return [False, EOL_data]
             else:
                 EOL_data = {}
-                for item in product_data_table.find_all('tr'):
+                for item in product_data_table[index_value].find_all('tr'):
                     th = item.find("th")
                     td = item.find("td")
                     if not th or not td:
@@ -210,11 +238,26 @@ def eox_check(link: str) -> list[bool, dict[str, str]]:
                     label = th.text.strip()
                     if label in ("Series Release Date", "End-of-Sale Date", "End-of-Support Date"):
                         EOL_data[label] = td.text.strip()
-                logging.debug(f"Device is out of support and EOX link is unavailable!\nURL: {cisco_url}{link}")
+                logging.debug(f"Device is out of support and EOX link is unavailable! Category 2\nURL: {cisco_url}{link}")
                 return [False, EOL_data]
         else:
             EOL_data = {}
-            for item in product_data_table.find_all('tr'):
+            if product_data_table[0].find("div", id="microLifecycleBlade"):
+                status = product_data_table[0].find("div", id="microLifecycleBlade").get("class")
+            else:
+                labels = product_data_table[index_value].find_all('tr')
+                for item in labels:
+                    th = item.find("th")
+                    td = item.find("td")
+                    if not th or not td:
+                        continue
+                    label = th.text.strip()
+                    if label in ("Status"):
+                        status = td.text.strip()
+                    else:
+                        status = "Unknown"
+            url = product_data_table[index_value].find("tr", class_="birth-cert-status").find('a')
+            for item in product_data_table[index_value].find_all('tr'):
                 th = item.find("th")
                 td = item.find("td")
                 if not th or not td:
@@ -222,8 +265,15 @@ def eox_check(link: str) -> list[bool, dict[str, str]]:
                 label = th.text.strip()
                 if label in ("Series Release Date", "End-of-Sale Date", "End-of-Support Date"):
                     EOL_data[label] = td.text.strip()
-            logging.debug(f"Device is still in support and EOX is not accounced.\nURL: {cisco_url}{link}")
-            return [False, EOL_data]
+            logging.debug(f"Device is {str(status).upper()}!\nURL: {cisco_url}{link}")
+            if url:
+                link = link_check(url.get('href'))
+                EOL_data['url'] = link
+                logging.debug(f"EOX Link available for {str(status).upper()} device and extracted with URL: {cisco_url}{link}")
+                return [True, EOL_data]
+            else:   
+                logging.debug(f"EOX Link unavailable for {str(status).upper()} device hence extracted dates from URL: {cisco_url}{link}")
+                return [False, EOL_data]
     except Exception as e:
         logging.error(f"An Error Occurred for while retreiving EOX redirection Links!\n{e}")
         return None 
@@ -236,15 +286,19 @@ def eox_details(link: str):
     logging.info("Starting EOX Link retreival process.")
     urls = {}
     try:
-        for links in bs4.BeautifulSoup(requests.get(f'{cisco_url}{link}').text, 'lxml').find('ul', class_='listing').find_all('li'):
-            text = links.find('a').text 
-            if detect(text) == 'en':
-                if "Software" in text:
-                    continue
-                else:
-                    logging.debug(f"EOX Link Retreived successfully!\nURL: {cisco_url}{link}")
-                    urls[text.replace("End-of-Sale and End-of-Life Announcement for the Cisco ", "")] = links.find('a').get('href') 
-        return urls
+        url_check = bs4.BeautifulSoup(requests.get(f'{cisco_url}{link}').text, 'lxml')
+        if url_check.find('ul', class_='listing'):
+            for links in url_check.find('ul', class_='listing').find_all('li'):
+                text = links.find('a').text 
+                if detect(text) == 'en':
+                    if any(keyword in text for keyword in ["Software", "Release", "IOS"]):
+                        continue
+                    else:
+                        logging.debug(f"EOX Link Retreived successfully!\nURL: {cisco_url}{link}")
+                        urls[text.replace("End-of-Sale and End-of-Life Announcement for the Cisco ", "")] = links.find('a').get('href') 
+            return urls
+        else:
+            return False
     except Exception as e:
         logging.error(f"An Error Occurred for while retreiving EOX Link!\n{e}")
         return None
@@ -257,14 +311,27 @@ def eox_scrapping(link: str) -> list[dict[str, str], list[str]]:
     devices = []
     try:
         tables = bs4.BeautifulSoup(requests.get(f'{cisco_url}{link}').text, 'lxml').find_all('table')
-        for section in tables[0].find('tbody').find_all('tr'):
+        if len(tables) <= 2:
+            # Generally, only 2 tables are available in the EOX page.
+            index_value = 0
+        else:
+            index_value = 0
+            for values in tables[index_value].find('tbody').find_all('tr'):
+                if values.find('td').text.lower().strip() == 'milestone':
+                    index_value = index_value
+                    break
+                else:
+                    index_value += 1
+        for section in tables[index_value].find('tbody').find_all('tr'):
             column = section.find_all('td')
             eox[column[0].text.strip()] = column[2].text.strip()
         for key in list(eox.keys()):
             if key.lower() == 'milestone':
                 del eox[key]
-        for device_list in tables[1].find('tbody').find_all('tr'):
+        for device_list in tables[index_value + 1].find('tbody').find_all('tr'):
             devices.append(device_list.find('td').text.strip())
+        if devices[0].lower().startswith('end-of-sale product'):
+            del devices[0]
         return [eox, devices]
     except Exception as e:
         logging.error(f"An Error Occurred for while retreiving EOX data!\n{e}")

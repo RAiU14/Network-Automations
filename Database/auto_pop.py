@@ -1,47 +1,47 @@
 # Auto Populate Program to Create a JSON Database
-# WIP
-
 from EOX.Cisco_EOX import *
 from .json_fun import *
 
-
+# Code block to directly obtain EOX for EOX Link available devices. 
 def obtain():
     all_available_devices, all_devices, eox_devices, eox_links, eox_data = {}, {}, {}, {}, {}
     categories = category()
     for link in categories.keys():
         all_available_devices[link] = open_cat(categories[link])
     
-    device_names = []
-    for devices in all_available_devices.values():
-        for device in devices:
-            if device['series'] not in device_names:
-                device_names.append(device['series'])
-    saver(all_available_devices, "devices_technology.json")
-    # Saving all the available device information. 
-    exit()
-    
-    for key in all_available_devices.keys():
-        if len(all_available_devices[key]) == 1:
-            # Only Device List Available:
-            all_devices[key] = all_available_devices[key][0]['series']
-        else:
-            # Both Device List and EOX Link are available. 
-            all_devices[key] = all_available_devices[key][0]['series']
-            eox_devices[key] = all_available_devices[key][1]['eox']
-    
-    for technology in eox_devices.keys():
-        available_eox_devices = eox_devices[technology]
-        for device in available_eox_devices.keys():
-            eox_details = eox_check(link_check(available_eox_devices[device]))
-            if eox_details is None:
-                print("ERROR: EOX Details not found for device:", device)
-                break
-            if eox_details[0]:
-                eox_links[device] = eox_details[1]
+    for technology in all_available_devices:
+        for key in all_available_devices[technology][0]['series']:
+            if len(all_available_devices[technology]) == 1:
+                for key in all_available_devices[technology][0]['series']:
+                # Only Series List is Available:
+                    all_devices[key] = all_available_devices[technology][0]['series'][key]
             else:
-                eox_data[device] = eox_details[1]
-                
-    print("\n\n\nEOX Links:\n", eox_links, "\n\n\nEOX Data:\n", eox_data)
+                # Both Device List and EOX are available. 
+                for key in all_available_devices[technology][0]['series']:
+                    all_devices[key] = all_available_devices[technology][0]['series'][key]
+                for key in all_available_devices[technology][1]['eox']:
+                    eox_devices[key] = all_available_devices[technology][1]['eox'][key]
+
+    eox_data = {}
+    for devices in eox_devices:
+        url = link_check(eox_devices[devices])
+        if not url:
+            continue
+        else:
+            eox_links = eox_check(url)
+            if not eox_links[0]:
+                eox_data[devices] = eox_links[1]
+            else:
+                urls = eox_details(eox_links[1]['url'])
+                if urls:
+                    for links in urls:
+                        eox = eox_scrapping(urls[links])
+                        if eox: 
+                            for dev in eox[1]:
+                                eox_data[dev] = eox[0]
+
+    with open('eox_pid.json', 'w') as f:
+        json.dump(eox_data, f, ensure_ascii=False, indent=4)
 
 # Code block to retreieve all the devices by Cisco which has URL details
 def device_list():
@@ -68,6 +68,5 @@ def device_list():
             values.extend(eox_devices[key])
         device_names[key] = values
     
-    saver(device_names, "all_available_devices.json")
+    saver(device_names, "device_family_per_technology.json")
 
-device_list()
