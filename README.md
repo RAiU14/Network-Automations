@@ -49,7 +49,7 @@ A set of python program files which can be used smartly and efficiently to make 
 > Further edits staged to implement edit functionality in the CSV section.
 [WIP]
 
-> auto_pop.py  
+> **auto_pop.py**
 A program to automatically retreive all available data from Cisco Portal. 
 [Working with 1 known failure. Addressed above!]
 

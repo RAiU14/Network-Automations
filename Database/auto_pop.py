@@ -1,5 +1,5 @@
 # Auto Populate Program to Create a JSON Database
-from EOX.Cisco_EOX import *
+from EOX.Cisco_EOX_Scrapper import *
 from .json_fun import *
 
 # Code block to directly obtain EOX for EOX Link available devices. 
