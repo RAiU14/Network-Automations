@@ -7,7 +7,7 @@ import logging
 # Write data
 def saver(data, filename):
     try:
-        path = r"C:\\Users\\shivanarayan.v\\OneDrive - NTT Ltd\\Documents\\Github Stuffs\\WIP\\Network-Automations\\Database\\JSON_Files\\"
+        path = r"Mention Path Here"
         if os.path.exists(os.path.join(path, filename)):
             return False
         else:

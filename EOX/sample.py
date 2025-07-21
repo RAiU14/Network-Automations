@@ -2,8 +2,8 @@
 # Testing & Bug Fix in progress
 # Currently using Database\auto_pop.py as sample.py 
 # This is an ideal scenario of how the program works currently. 
-from Cisco_EOX import *
-from Cisco_PID import *
+from EOX.Cisco_EOX_Scrapper import *
+from EOX.Cisco_PID_Retriever import *
 
 # A simple function to display obtained items as a menu driven function.
 def menu(data):

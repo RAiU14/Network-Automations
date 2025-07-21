@@ -37,10 +37,6 @@ A set of python program files which can be used smartly and efficiently to make 
 > Performing a simple OS check before pinging the device or devices. 
 > You can use the provided functions to simply check for their remote reachability status with or without the jumphost. 
 
->**PM Report**
-> NX_OS.py  Created to analyse and output the logs to excel sheet for quick understanding and reference. It works in one or multiple files with some constraints. 
-[WIP]
-
 >**Database Directory**
 > Created two files, Database.py and EOX.db
 > Database.py is coded to take input from the user, the user input is set as primary key.
@@ -48,10 +44,22 @@ A set of python program files which can be used smartly and efficiently to make 
 > Added few extra lines of code to the same Database.py file to achieve the results which were obtained through database/SQL, but by using CSV file.
 > Added few extra lines of code to the same Database.py file to achieve the results which were obtained through database/SQL, but by using json.
 > Revisted the SQL section to add the edit functionality to the existing data in a table.
+> Edited retrieve function of SQL section to accomodate visually appealing and easy to read output format.
+
+> Further edits staged to implement edit functionality in the CSV section.
 [WIP]
 
-> auto_pop.py  
+> **auto_pop.py**
 A program to automatically retreive all available data from Cisco Portal. 
 [Working with 1 known failure. Addressed above!]
+
+**PM_Report folder**
+> Contails python scripts to gather Health parameters of Network applaince based on individual technology and vendor.
+> Currently, sripts are in phase 1 i.e., need further enhancement.
+> Provides basic information by analysing log data, and marks unavailable data as 'NA'
+> Further information will be available as the progression contunues - [WIP]
+> what si working? known errors? what is pending?
+
+
 
 Note: The .gitignore file have been created with the help of gitignore.io website
