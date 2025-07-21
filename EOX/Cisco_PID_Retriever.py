@@ -1,12 +1,14 @@
 import re
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict
 from .Cisco_EOX_Scrapper import *
 # This is a simple program to 
 # Note: This only works for PIDs with series or numerical value. 
 
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+log_dir = os.path.join(os.path.dirname(__file__), "logs")
+os.makedirs(log_dir, exist_ok=True)
+logging.basicConfig(filename=os.path.join(log_dir,  f"{datetime.datetime.today().strftime('%Y-%m-%d')}.log"), level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # To get a possible series
 def get_possible_series(pid: str):
