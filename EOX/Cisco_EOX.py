@@ -11,7 +11,7 @@ logging.basicConfig(filename=os.path.join(log_dir,  f"{datetime.datetime.today()
 class Cisco_EOX:
     def __init__(self, pid: str, db_path: str = None):
         self.pid = pid
-        self.db_path = db_path or r"C:\\Users\\shivanarayan.v\\OneDrive - NTT Ltd\\Documents\\Github Stuffs\\WIP\\Network-Automations\\Database\\JSON_Files\\eox_pid.json"
+        self.db_path = db_path or r"Mention Path Here"
         logging.debug(f"Initialized Cisco_EOX for PID={self.pid}.")
 
     def local_db_check(self):
