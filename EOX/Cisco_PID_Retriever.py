@@ -39,19 +39,35 @@ def get_possible_series(pid: str):
 
 # Below method is used to search online. 
 # To compare it with the device list from the device category link. 
-def find_device_series_link(pid: str, all_devices: List[Dict[str, Dict[str, str]]]):
+def find_device_series_link(pid: str, tech: str):
     try:
+        data = {}
+        all_devices = open_cat(tech)
         series_candidates = get_possible_series(pid)
         logging.debug(f"Series candidates for '{pid}': {series_candidates}")
+
         for cand in series_candidates:
             for tech_block in all_devices:
                 for devices in tech_block.values():
                     for device_name, url in devices.items():
                         if cand in device_name:
                             logging.info(f"Matched '{cand}' in '{device_name}'")
-                            return [device_name, url]
-        logging.info(f"No match found for PID '{pid}'")
-        return None
+                            data[device_name] = url
+        if data:
+            clean_pid = pid.replace("-", "").upper()
+            print(f"Search Clean: {clean_pid}")
+            print(f"All available PIDs: {data.keys()}")
+            best_match = max(data.keys(), key=lambda k: len(k.replace('-', '').replace(' ', '').upper()) if k.replace('-', '').replace(' ', '').upper() in clean_pid else 0, default=None)
+            print(best_match, data[best_match])
+            if pid in data.keys():
+                logging.debug(f"Exact match found for PID '{pid}': {data[pid]}")
+                return data[pid]
+            else:
+                logging.debug(f"Match found for PID '{pid}': {data[pid]}")
+                return list(data.values())[0]  # Return the first match if no exact match
+        else:
+            logging.info(f"No match found for PID '{pid}'")
+            return False
     except Exception as e:
         logging.error(f"An Error Occurred while retreving link for {pid}!\n{e}")
         return None
@@ -85,26 +101,4 @@ def eox_retreival(pid, link):
         logging.error(f"An Error Occurred while retreving EOX for {pid}!\n{e}")
         return None
         
-
-if __name__ == "__main__":
-    All_Devices = open_cat('/c/en/us/support/wireless/index.html')
-    
-    pid = "AIR-AP2702E-UXBULK"
-    # pid = "AIR-AP2602E-UXBULK"
-    # pid = "9800"
-    # pid = "asdfkasdf"
-    
-    result = find_device_series_link(pid, All_Devices)
-    if result:
-        device_name, link = result
-        print(f"Matched Device: {device_name}\nURL: {link}")
-        eox_devices = eox_retreival(pid, link)
-        if eox_devices[0] == False:
-            print(f"Device Still in Support!\n{eox_devices[1]}")
-        else:
-            if pid in eox_devices[1]:
-                print(eox_devices[0])
-                print("TRUE!")
-    else:
-        print("No link found for the detected series.")
         
