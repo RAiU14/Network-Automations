@@ -5,7 +5,7 @@ UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'zip'}
 
 app = Flask(__name__)
-app.secret_key = 'your_secret_key_here'  # Change this to a random secret key
+app.secret_key = 'your_secret_key_here'  
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 def allowed_file(filename):
@@ -13,7 +13,6 @@ def allowed_file(filename):
 
 @app.route('/')
 def index():
-    # Show upload form directly
     technologies = ['Wireless', 'Switching', 'Security', 'Others']  # expand as needed
     return render_template('upload.html', technologies=technologies)
 
