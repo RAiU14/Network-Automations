@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Upload Logs</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #eef2f7; margin: 0; padding: 0;}
+    header {
+      background-color: #004080;
+      color: white;
+      padding: 15px 20px;
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+    header img { height: 40px; }
+    header h1 { margin: 0; font-size: 1.5rem; }
+    .container {
+      max-width: 700px;
+      margin: 30px auto;
+      background: white;
+      border-radius: 8px;
+      padding: 20px 30px;
+      box-shadow: 0 0 10px #ccc;
+    }
+    label {
+      display: block;
+      margin-top: 20px;
+      font-weight: bold;
+    }
+    input[type=text], textarea, select {
+      width: 100%;
+      padding: 8px;
+      margin-top: 5px;
+      box-sizing: border-box;
+      font-size: 1rem;
+      border: 1px solid #aaa;
+      border-radius: 4px;
+    }
+    textarea { resize: vertical; height: 80px; }
+    .file-upload {
+      margin-top: 15px;
+      border: 2px dashed #999;
+      padding: 30px;
+      text-align: center;
+      color: #666;
+      cursor: pointer;
+      transition: background-color 0.3s;
+      border-radius: 8px;
+    }
+    .file-upload.dragover {
+      background-color: #d0ebff;
+      border-color: #3399ff;
+      color: #004080;
+    }
+    .file-upload.file-selected {
+      background-color: #e8f5e8;
+      border-color: #4caf50;
+      color: #2e7d32;
+    }
+    .file-name {
+      font-weight: bold;
+      margin-top: 10px;
+      color: #2e7d32;
+    }
+    .buttons {
+      margin-top: 30px;
+      display: flex;
+      justify-content: space-between;
+    }
+    button {
+      padding: 10px 25px;
+      font-size: 1rem;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button.reset {
+      background-color: #bbb;
+      color: #444;
+    }
+    button.submit {
+      background-color: #004080;
+      color: white;
+    }
+    button:hover {
+      opacity: 0.9;
+    }
+    .flash {
+      margin-bottom: 15px;
+      padding: 12px;
+      border-radius: 6px;
+    }
+    .flash.success { background-color: #d4edda; color: #155724; }
+    .flash.warning { background-color: #fff3cd; color: #856404; }
+    .flash.danger { background-color: #f8d7da; color: #721c24; }
+  </style>
+</head>
+<body>
+  <header>
+    <!-- Replace with your logo -->
+    <!-- <img src="{{ url_for('static', filename='logo.png') }}" alt="Logo"> -->
+    <h1>Log Upload Portal</h1>
+  </header>
+  <div class="container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <form id="uploadForm" action="{{ url_for('upload') }}" method="POST" enctype="multipart/form-data">
+      
+      <label for="ticket">Ticket Number / Comment (Ticket Number is required):</label>
+      <input type="text" name="ticket" id="ticket" placeholder="Enter ticket number here" required />
+
+      <label for="comment" style="margin-top: 10px;">Comment (optional):</label>
+      <textarea name="comment" id="comment" placeholder="Add any comments here"></textarea>
+
+      <label for="technology">Technology:</label>
+      <select name="technology" id="technology" required>
+        <option value="" disabled selected>Select a technology</option>
+        {% for tech in technologies %}
+          <option value="{{ tech }}">{{ tech }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="file">Upload Logs (zip file only):</label>
+      <div class="file-upload" id="fileDropArea">
+        <div id="fileText">Drag & Drop your zip file here or click to browse</div>
+        <div id="fileName" class="file-name" style="display:none;"></div>
+        <input type="file" name="file" id="fileInput" accept=".zip" style="display:none;" required />
+      </div>
+
+      <div class="buttons">
+        <button type="reset" class="reset">Reset</button>
+        <button type="submit" class="submit">Submit</button>
+      </div>
+    </form>
+  </div>
+
+  <script>
+    const fileDropArea = document.getElementById('fileDropArea');
+    const fileInput = document.getElementById('fileInput');
+    const fileText = document.getElementById('fileText');
+    const fileName = document.getElementById('fileName');
+
+    // Function to update UI when file is selected
+    function updateFileDisplay(file) {
+      if (file && file.name.endsWith('.zip')) {
+        fileDropArea.classList.add('file-selected');
+        fileText.style.display = 'none';
+        fileName.textContent = `Selected: ${file.name}`;
+        fileName.style.display = 'block';
+      } else {
+        resetFileDisplay();
+        if (file && !file.name.endsWith('.zip')) {
+          alert('Only zip files are allowed.');
+        }
+      }
+    }
+
+    // Function to reset file display
+    function resetFileDisplay() {
+      fileDropArea.classList.remove('file-selected');
+      fileText.style.display = 'block';
+      fileName.style.display = 'none';
+      fileInput.value = '';
+    }
+
+    // Click to browse
+    fileDropArea.addEventListener('click', () => fileInput.click());
+
+    // File input change
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) {
+        updateFileDisplay(e.target.files[0]);
+      }
+    });
+
+    // Drag and drop events
+    fileDropArea.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      fileDropArea.classList.add('dragover');
+    });
+
+    fileDropArea.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      fileDropArea.classList.remove('dragover');
+    });
+
+    fileDropArea.addEventListener('drop', (e) => {
+      e.preventDefault();
+      fileDropArea.classList.remove('dragover');
+      if (e.dataTransfer.files.length > 0) {
+        const file = e.dataTransfer.files[0];
+        if (file.name.endsWith('.zip')) {
+          fileInput.files = e.dataTransfer.files;
+          updateFileDisplay(file);
+        } else {
+          alert('Only zip files are allowed.');
+        }
+      }
+    });
+
+    // Reset button functionality
+    document.querySelector('button[type="reset"]').addEventListener('click', (e) => {
+      e.preventDefault();
+      document.getElementById('uploadForm').reset();
+      resetFileDisplay();
+    });
+
+    // Form validation
+    document.getElementById('uploadForm').addEventListener('submit', e => {
+      if(!fileInput.files.length){
+        e.preventDefault();
+        alert('Please upload a zip file.');
+      }
+    });
+  </script>
+</body>
+</html>
