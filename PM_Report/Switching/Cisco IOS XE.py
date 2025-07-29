@@ -1,5 +1,6 @@
 import re
 import os
+from IOS_XE_Stack_Switch import *
 
 def get_hostname(log_data):
     match = re.search(r"hostname\s+(\S+)", log_data)
@@ -33,6 +34,33 @@ def get_last_reboot_reason(log_data):
 def get_cpu_utilization(log_data):
     match = re.search(r"five minutes:\s+(\d+)%", log_data)
     return match.group(1) + "%" if match else "NA"
+
+def check_stack(log_data):
+    try:
+            cleared_data_start = re.search('show version', log_data, re.IGNORECASE)
+            if not cleared_data_start:
+                return False
+
+            cleared_data_end = re.search('show', log_data[cleared_data_start.span()[1] + 1:], re.IGNORECASE)
+            if not cleared_data_end:
+                req_data = log_data[cleared_data_start.span()[1]:]
+            else:
+                req_data = log_data[cleared_data_start.span()[1]:cleared_data_start.span()[1] + cleared_data_end.span()[0]]
+
+            start_point = re.search(r"System Serial Number\s+:\s+(\S+)", req_data)
+            # This is case sensitive, and it will not work for IOS only on IOS XE.
+            if not start_point:
+                return False
+
+            next_start_end_point = re.search(r"Switch\s+(\S+)", req_data[start_point.span()[1]:])
+            if not next_start_end_point:
+                return False
+            else: 
+                stack_switch_data = Stack_Check()
+                return stack_switch_data.parse_ios_xe_stack_switch(log_data)
+    
+    except Exception as e:
+        return 405
 
 def get_memory_info(log_data):
     match = re.search(r"Processor\s+\S+\s+(\d+)\s+(\d+)\s+(\d+)", log_data)
@@ -155,7 +183,8 @@ def process_file(file_path):
         "PowerSupply status": get_power_supply_status(log_data),
         "Any debug" : get_debug_status(log_data),
         "Available Free Ports" : get_available_ports(log_data),
-        "Half Duplex Ports" : get_half_duplex_ports(log_data)
+        "Half Duplex Ports" : get_half_duplex_ports(log_data), 
+        "Stack Switch": check_stack(log_data)
     }
     print_data(data)
 
@@ -167,13 +196,8 @@ def process_directory(directory_path):
 
 def main():
     # For a single file
-    file_path = r""
+    file_path = r"Mention Path here"
     process_file(file_path)
-
-    # For a directory
-    # directory_path = r"C:\Users\girish.n\Downloads\SVR137436091"
-    # process_directory(directory_path)
-
 
 if __name__ == "__main__":
     main()

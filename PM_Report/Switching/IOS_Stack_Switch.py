@@ -88,7 +88,7 @@ class Stack_Check:
             return None
 
 if __name__ == "__main__":
-    file_name = r""
+    file_name = r"Mention path here"
     # You can optionally pass `log_data` as None if not used directly
     stack_check = Stack_Check()
     result = stack_check.parse_ios_stack_switch(file_name)

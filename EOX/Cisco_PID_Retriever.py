@@ -42,7 +42,9 @@ def get_possible_series(pid: str):
 def find_device_series_link(pid: str, tech: str):
     try:
         data = {}
-        all_devices = open_cat(tech)
+        available_category = category()
+        tech_link = available_category[tech]
+        all_devices = open_cat(tech_link)
         series_candidates = get_possible_series(pid)
         logging.debug(f"Series candidates for '{pid}': {series_candidates}")
 
@@ -100,5 +102,3 @@ def eox_retreival(pid, link):
     except Exception as e:
         logging.error(f"An Error Occurred while retreving EOX for {pid}!\n{e}")
         return None
-        
-        

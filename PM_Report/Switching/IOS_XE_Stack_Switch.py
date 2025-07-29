@@ -27,12 +27,10 @@ class Stack_Check:
         match = re.search(r"uptime \s+(.+)", target)
         return match.group(1).strip() if match else None
 
-    def parse_ios_xe_stack_switch(self, file_name):
+    def parse_ios_xe_stack_switch(self, content):
         try:
             data = {}
             switch_data = []
-            with open(file_name, 'r') as file:
-                content = file.read()
 
             cleared_data_start = re.search('show version', content, re.IGNORECASE)
             if not cleared_data_start:
@@ -88,8 +86,7 @@ class Stack_Check:
             return None
 
 if __name__ == "__main__":
-    file_name = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200\UOBAM-C9300-PLA-L20-DSW-01_10.52.254.5.txt"
-    
+    file_name = r"Mention Path Here"
     # You can optionally pass `log_data` as None if not used directly
     stack_check = Stack_Check()
     result = stack_check.parse_ios_xe_stack_switch(file_name)
