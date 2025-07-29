@@ -15,12 +15,6 @@ A set of python program files which can be used smartly and efficiently to make 
 > Always validate EOX details directly from [Cisco's official website](https://www.cisco.com) before making any business decisions.
 > Use requirements.txt to install all the dependencies for the program to work.
 > Cisco PID: A simple program tool to smartly figure out the device series and to check in the product page. 
-> [Complete Automation In Progress]
-> Known Failure for Device: Cisco Nexus 1000V Switch for VMware vSphere
-> For some reason, this is the only page which is different in entire Cisco Domain. 
-> Something not working? Let me know!
-> Sample.py shows how you can use both the program. 
-[Broken, WIP on a new Sample under Database\auto_pop.py]
 
 
 >**Connection.py**  
@@ -50,8 +44,7 @@ A set of python program files which can be used smartly and efficiently to make 
 [WIP]
 
 > **auto_pop.py**
-A program to automatically retreive all available data from Cisco Portal. 
-[Working with 1 known failure. Addressed above!]
+A program to automatically retreive all available EOX mentioned data from the Cisco Portal using EOX Package. 
 
 **PM_Report folder**
 > Contails python scripts to gather Health parameters of Network applaince based on individual technology and vendor.
