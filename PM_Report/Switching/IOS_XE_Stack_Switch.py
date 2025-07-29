@@ -70,7 +70,7 @@ class Stack_Check:
                 stack_switch_data = req_data[start_point.span()[1] + next_start_end_point.span()[1] + end_point.span()[1]:]
                 stack_switch_items = re.split(r'-{3,}', stack_switch_data.strip())
                 
-                switch_number = 1
+                switch_number = 2
                 for item in stack_switch_items:
                     if len(item) > 1:
                         # Check if any info exists before adding
@@ -88,7 +88,7 @@ class Stack_Check:
             return None
 
 if __name__ == "__main__":
-    file_name = r""
+    file_name = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200\UOBAM-C9300-PLA-L20-DSW-01_10.52.254.5.txt"
     
     # You can optionally pass `log_data` as None if not used directly
     stack_check = Stack_Check()
