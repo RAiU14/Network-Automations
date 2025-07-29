@@ -57,16 +57,28 @@ def find_device_series_link(pid: str, tech: str):
                             data[device_name] = url
         if data:
             clean_pid = pid.replace("-", "").upper()
-            print(f"Search Clean: {clean_pid}")
-            print(f"All available PIDs: {data.keys()}")
-            best_match = max(data.keys(), key=lambda k: len(k.replace('-', '').replace(' ', '').upper()) if k.replace('-', '').replace(' ', '').upper() in clean_pid else 0, default=None)
-            print(best_match, data[best_match])
-            if pid in data.keys():
+            logging.debug(f"Cleaned the PID for matching: {pid} is now {clean_pid}")
+            logging.debug(f"Available PIDs: {list(data.keys())}")
+            
+            # Checking for exact match first
+            if pid in data:
                 logging.debug(f"Exact match found for PID '{pid}': {data[pid]}")
                 return data[pid]
+
+            logging.info("Starting Best Match Logic")
+            best_match = max(
+                data.keys(), 
+                key=lambda k: len(k.replace('-', '').replace(' ', '').upper()) if k.replace('-', '').replace(' ', '').upper() in clean_pid else 0, 
+                default=None
+            )
+            
+            if best_match:
+                logging.debug(f"Closest best match found for PID '{pid}': {data[best_match]}")
+                return data[best_match]
             else:
-                logging.debug(f"Match found for PID '{pid}': {data[pid]}")
-                return list(data.values())[0]  # Return the first match if no exact match
+                logging.debug(f"No good match, returning first available: {list(data.values())[0]}")
+                return list(data.values())[0]
+
         else:
             logging.info(f"No match found for PID '{pid}'")
             return False
@@ -102,3 +114,4 @@ def eox_retreival(pid, link):
     except Exception as e:
         logging.error(f"An Error Occurred while retreving EOX for {pid}!\n{e}")
         return None
+    
