@@ -167,7 +167,7 @@ def process_directory(directory_path):
 
 def main():
     # For a single file
-    file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200\UOBM-C9200-BBT-OA-L1-01_10.58.72.12.txt"
+    file_path = r""
     process_file(file_path)
 
     # For a directory
