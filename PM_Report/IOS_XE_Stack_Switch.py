@@ -14,26 +14,27 @@ class Stack_Check:
 
     def serial_number(self, data=None):
         target = data if data is not None else self.log_data
-        match = re.search(r"System serial number\s+:\s+(\S+)", target)
+        match = re.search(r"System Serial Number\s+:\s+(\S+)", target)
         return match.group(1) if match else None
 
     def model_number(self, data=None):
         target = data if data is not None else self.log_data
-        match = re.search(r"Model number\s+:\s+(\S+)", target)
+        match = re.search(r"Model Number\s+:\s+(\S+)", target)
         return match.group(1) if match else None
+    
+    def get_last_reboot_reason(self, data=None):
+        target = data if data is not None else self.log_data
+        match = re.search(r"Last reload reason\s+:\(.+)", target)
+        return match.group(1) if match else "NA"
 
     def uptime(self, data=None):
         target = data if data is not None else self.log_data
-        match = re.search(r"Uptime \s+(.+)", target)
+        match = re.search(r"uptime \s+(.+)", target)
         return match.group(1).strip() if match else None
 
-    def parse_ios_stack_switch(self, file_name):
+    def parse_ios_xe_stack_switch(self, content):
         try:
             data = {}
-            switch_data = []
-            with open(file_name, 'r') as file:
-                content = file.read()
-
             cleared_data_start = re.search('show version', content, re.IGNORECASE)
             if not cleared_data_start:
                 print("Missing 'show version' section")
@@ -45,14 +46,14 @@ class Stack_Check:
             else:
                 req_data = content[cleared_data_start.span()[1]:cleared_data_start.span()[1] + cleared_data_end.span()[0]]
 
-            start_point = re.search(r"System serial number\s+:\s+(\S+)", req_data)
+            start_point = re.search(r"System Serial Number\s+:\s+(\S+)", req_data)
             if not start_point:
-                print("Missing 'System serial Number' in show version")
+                print("Missing 'System Serial Number' in show version")
                 return False
 
             next_start_end_point = re.search(r"Switch\s+(\S+)", req_data[start_point.span()[1]:])
             if not next_start_end_point:
-                print("No 'Switch' found after System serial Number")
+                print("No 'Switch' found after System Serial Number")
                 return False
 
             end_point = re.search(r"Switch\s+(\S+)", req_data[start_point.span()[1] + next_start_end_point.span()[1] + 1:])
@@ -69,27 +70,28 @@ class Stack_Check:
                 print("This is a stack switch with multiple switches.")
                 stack_switch_data = req_data[start_point.span()[1] + next_start_end_point.span()[1] + end_point.span()[1]:]
                 stack_switch_items = re.split(r'-{3,}', stack_switch_data.strip())
-                
-                switch_number = 1
+                switch_number = 2
                 for item in stack_switch_items:
                     if len(item) > 1:
                         # Check if any info exists before adding
-                        if self.serial_number(item) or self.model_number(item) or self.uptime(item):
-                            data[f'stack switch {switch_number} serial_number'] = self.serial_number(item)
-                            data[f'stack switch {switch_number} model_number'] = self.model_number(item)
-                            data[f'stack switch {switch_number} uptime'] = self.uptime(item)
+                        if self.serial_number(item) or self.model_number(item) or self.uptime(item) or self.get_last_reboot_reason(item):
+                            data[f'stack switch {switch_number} Serial_Number'] = self.serial_number(item)
+                            data[f'stack switch {switch_number} Model_Number'] = self.model_number(item)
+                            data[f'stack switch {switch_number} Uptime'] = self.uptime(item)
+                            data[f'stack switch {switch_number} Last Reboot'] = self.get_last_reboot_reason(item)
                             switch_number += 1
-                switch_data.append(data)
-                return switch_data
+                return data
             else:
-                return 404
+                return False
         except Exception as e:
             print(f"Error parsing IOS XE stack switch: {e}")
             return None
 
 if __name__ == "__main__":
-    file_name = r"Mention path here"
+    file_name = r""
+    with open(file_name) as file:
+        content = file.read()
     # You can optionally pass `log_data` as None if not used directly
     stack_check = Stack_Check()
-    result = stack_check.parse_ios_stack_switch(file_name)
+    result = stack_check.parse_ios_xe_stack_switch(content)
     print(result)
