@@ -1,5 +1,6 @@
 import re
 import os
+import pprint as pp
 from IOS_XE_Stack_Switch import *
 
 def get_hostname(log_data):
@@ -127,13 +128,13 @@ def get_flash_info(log_data):
                             free = available_bytes
                             used = total - free
                             utilization = (used / total) * 100
-                            flash_information[flash_number[0]] = [total, free, used, utilization]
+                            flash_information[flash_number[0]] = [total, used, free, utilization]
                         else:
                             total = available_bytes + used_bytes
                             free = available_bytes
                             used = total - free
                             utilization = (used / total) * 100
-                            flash_information['1'] = [total, free, used, utilization]
+                            flash_information['1'] = [total, used, free, utilization]
             return flash_information
         else:
             return "No flash information found"
@@ -143,15 +144,15 @@ def get_flash_info(log_data):
 def get_fan_status(log_data):
     try:
         switches = log_data.split("Sensor List: Environmental Monitoring")[1:]
-        fan_status = {}
+        status = []
         for i, switch in enumerate(switches, start=1):
             match = re.search(r'Switch FAN Speed State Airflow direction.*?(?=SW  PID)', switch, re.DOTALL)
             if match:
                 fan_section = match.group(0)
                 fans = re.findall(r'\d+\s+\d+\s+(OK|[^O][^K])', fan_section)
-                status = 'OK' if all(fan == 'OK' for fan in fans) else 'Not OK'
-                fan_status[f'Switch {i}'] = status
-        return fan_status
+                status.append('OK' if all(fan == 'OK' for fan in fans) else 'Not OK')
+                # fan_status[f'Switch {i}'] = status
+        return status
     except Exception as e:
         return f"Error in get_fan_status: {str(e)}"
 
@@ -166,7 +167,7 @@ def get_temperature_status(log_data):
             switch_temps[switch].append(temp[2])
         result = []
         for switch, temps in switch_temps.items():
-            result.append(f"Switch {switch} Temperature: {'OK' if all(temp.upper() == 'GREEN' for temp in temps) else 'Not OK'}")
+            result.append('OK' if all(temp.upper() == 'GREEN' for temp in temps) else 'Not OK')
         return result
     except Exception as e:
         return f"Error in get_temperature_status: {str(e)}"
@@ -203,8 +204,7 @@ def get_power_supply_status(log_data):
                     psu_pid_section = psu_pid_section_match.group(0)
                     if re.search(r'No Input Power|Bad', psu_pid_section):
                         alarm_status = "ALARM"
-
-            results.append(f"Switch {switch_number}: {alarm_status}")
+            results.append(alarm_status)
 
         return results
     except Exception as e:
@@ -226,34 +226,37 @@ def get_debug_status(log_data):
         return f"Error in get_debug_status: {str(e)}"
     
 def get_available_ports(log_data):
-    start_marker = "------------------ show interfaces status ------------------"
-    end_marker = "------------------ show "
-    
-    match = re.search(f"{re.escape(start_marker)}(.*?){re.escape(end_marker)}", log_data, re.DOTALL)
-    if match:
-        section = match.group(1)
-        ports = {}
-        for line in section.strip().splitlines()[1:]:  # Skip the header line
-            parts = line.split()
-            if 'notconnect' in parts and '1' in parts:
-                try:
-                    interface = parts[0]
-                    switch_number = int(interface.split('/')[0].replace('Gi', '').replace('Te', '').replace('Ap', '').replace('Po', ''))
-                    if switch_number not in ports:
-                        ports[switch_number] = []
-                    ports[switch_number].append(interface)
-                except (ValueError, IndexError):
-                    continue
-        port_list = [ports.get(i, []) for i in range(1, max(ports.keys()) + 1 if ports else 1)]
-        count = sum(len(port) for port in port_list)
-        if count:
-            return [[len(port)] for port in port_list]
-        else:
-            return 0
+    try:
+        start_marker = "------------------ show interfaces status ------------------"
+        end_marker = "------------------ show "
+        
+        match = re.search(f"{re.escape(start_marker)}(.*?){re.escape(end_marker)}", log_data, re.DOTALL)
+        if match:
+            section = match.group(1)
+            ports = {}
+            for line in section.strip().splitlines()[1:]:  # Skip the header line
+                parts = line.split()
+                if 'notconnect' in parts and '1' in parts:
+                    try:
+                        interface = parts[0]
+                        switch_number = int(interface.split('/')[0].replace('Gi', '').replace('Te', '').replace('Ap', '').replace('Po', ''))
+                        if switch_number not in ports:
+                            ports[switch_number] = []
+                        ports[switch_number].append(interface)
+                    except (ValueError, IndexError):
+                        continue
+            port_list = [ports.get(i, []) for i in range(1, max(ports.keys()) + 1 if ports else 1)]
+            count = sum(len(port) for port in port_list)
+            if count:
+                return [[len(port)] for port in port_list]
+            else:
+                return 0
+    except Exception as e:
+        return [[str(e)]]
 
 def get_half_duplex_ports(log_data):
     try:
-        stack_switch = Stack_Check()
+        stack_switch = Stack_Check(log_data)
         get_stack_size = stack_switch.stack_size(log_data)
         match = re.findall(r"^(\S+).*a-half.*$", log_data, re.IGNORECASE | re.MULTILINE)
         if match:
@@ -273,7 +276,7 @@ def get_half_duplex_ports(log_data):
 
 def get_interface_remark(log_data):
     try:
-        stack_switch = Stack_Check()
+        stack_switch = Stack_Check(log_data)
         get_stack_size = stack_switch.stack_size(log_data)
         match = re.findall(r"^(\S+).*a-half.*$", log_data, re.IGNORECASE | re.MULTILINE)
         if match:
@@ -405,8 +408,8 @@ def process_file(file_path):
                 config_status.append(get_nvram_config_update(log_data)[0])
                 config_date.append(get_nvram_config_update(log_data)[1])
                 
-            data["Filename"] = file_name
-            data["Hostname"] = hostname
+            data["File name"] = file_name
+            data["Hos tname"] = hostname
             data["Model Number"] = model_number
             data["IP Address"] = ip_address
             data["Uptime"] = uptime
@@ -443,8 +446,8 @@ def process_directory(directory_path):
 def main():
     try:
         # file_path = r"C:\Users\shivanarayan.v\Downloads\PROD28FLOORSW01_172.16.3.28 1.txt"
-        file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR135977300\PROD029FLOORSW01_172.16.3.29.txt"
-        print(process_file(file_path))
+        file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200\UOBAM-C9300-PLA-L20-DSW-01_10.52.254.5.txt"
+        pp.pprint(process_file(file_path))
     except Exception as e:
         print(f"Error in main: {str(e)}")
 
