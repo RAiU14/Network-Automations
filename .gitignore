@@ -266,3 +266,7 @@ Log_samples/
 
 Temp/
 Cisco 3750 switch.py
+
+Database/Remarks.py
+example_ticket.xlsx
+updated_output.xlsx
