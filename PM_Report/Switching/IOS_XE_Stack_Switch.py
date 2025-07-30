@@ -32,6 +32,43 @@ class Stack_Check:
         match = re.search(r"uptime \s+(.+)", target)
         return match.group(1).strip() if match else None
 
+    def stack_size(self, content):
+        try:
+            cleared_data_start = re.search('show version', content, re.IGNORECASE)
+            if not cleared_data_start:
+                print("Missing 'show version' section")
+                return False
+
+            cleared_data_end = re.search('show', content[cleared_data_start.span()[1] + 1:], re.IGNORECASE)
+            if not cleared_data_end:
+                req_data = content[cleared_data_start.span()[1]:]
+            else:
+                req_data = content[cleared_data_start.span()[1]:cleared_data_start.span()[1] + cleared_data_end.span()[0]]
+
+            start_point = re.search(r"System Serial Number\s+:\s+(\S+)", req_data)
+            if not start_point:
+                print("Missing 'System Serial Number' in show version")
+                return False
+
+            next_start_end_point = re.search(r"Switch\s+(\S+)", req_data[start_point.span()[1]:])
+            if not next_start_end_point:
+                print("No 'Switch' found after System Serial Number")
+                return False
+
+            end_point = re.search(r"Switch\s+(\S+)", req_data[start_point.span()[1] + next_start_end_point.span()[1] + 1:])
+            if not end_point:
+                print("No second 'Switch' found after first Switch")
+                return False
+
+            stack_data = req_data[
+                start_point.span()[1] + next_start_end_point.span()[1] : start_point.span()[1] + next_start_end_point.span()[1] + end_point.span()[0]
+            ]
+
+            total_stack_switches = len(stack_data.strip().splitlines()[2:])
+            return total_stack_switches
+        except Exception as e:
+            return None
+    
     def parse_ios_xe_stack_switch(self, content):
         try:
             data = {}
@@ -74,11 +111,14 @@ class Stack_Check:
                 for item in stack_switch_items:
                     if len(item) > 1:
                         # Check if any info exists before adding
-                        if self.serial_number(item) or self.model_number(item) or self.uptime(item) or self.get_last_reboot_reason(item) is not None:
+                        if self.serial_number(item) or self.model_number(item) or self.uptime(item) is not None:
                             data[f'stack switch {switch_number} Serial_Number'] = self.serial_number(item)
                             data[f'stack switch {switch_number} Model_Number'] = self.model_number(item)
                             data[f'stack switch {switch_number} Uptime'] = self.uptime(item)
-                            data[f'stack switch {switch_number} Last Reboot'] = self.get_last_reboot_reason(item)
+                            if self.get_last_reboot_reason(item):
+                                data[f'stack switch {switch_number} Last Reboot'] = self.get_last_reboot_reason(item)
+                            else: 
+                                data[f'stack switch {switch_number} Last Reboot'] = "N/A"
                             switch_number += 1
                 return data
             else:
