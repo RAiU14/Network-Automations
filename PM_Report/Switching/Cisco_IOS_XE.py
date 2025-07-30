@@ -274,8 +274,7 @@ def process_directory(directory_path):
             return "No Valid Log Files"
 
 def main():
-    # file_path = r"C:\Users\shivanarayan.v\Downloads\DRC01CORESW01_10.20.253.5.txt"
-    file_path = r"C:\Users\shivanarayan.v\Downloads\PROD029FLOORSW01_172.16.3.29.txt"
+    file_path = r"File Path"
     process_file(file_path)
 
 if __name__ == "__main__":
