@@ -106,10 +106,74 @@ def get_fan_status(log_data):
     return "OK" if re.search(r"\s+\d+\s+\d+\s+OK\s+Front to Back", log_data) else "Not OK"
 
 def get_temperature_status(log_data):
-    return "OK" if "GREEN" in log_data else "Not OK"
+    try:
+        temperature_status = re.findall(r'SYSTEM (INLET|OUTLET|HOTSPOT)\s+(\d+)\s+(\w+)', log_data)
+        switch_temps = {}
+        for temp in temperature_status:
+            switch = temp[1]
+            if switch not in switch_temps:
+                switch_temps[switch] = []
+            switch_temps[switch].append(temp[2])
+        result = []
+        for switch, temps in switch_temps.items():
+            result.append(f"Switch {switch} Temperature: {'OK' if all(temp.upper() == 'GREEN' for temp in temps) else 'Not OK'}")
+        return result
+    except Exception as e:
+        return str(e)
 
 def get_power_supply_status(log_data):
-    return "OK" if re.search(r"\s+PWR-C\d+-\d+KWAC\s+\S+\s+OK", log_data) else "Not OK"
+    try:
+        results = []
+        # Split the log data into sections for each switch based on the "Sensor List:" pattern
+        # The first split part before the first "Sensor List:" is usually part of the first switch's data
+        # We need to handle the initial data block for Switch 1 separately or ensure the split creates clean blocks.
+
+        # Let's find all occurrences of "Sensor List: Environmental Monitoring" to delineate switch blocks
+        # and then extract content between them.
+        
+        # A more robust way: find starting points of each "Sensor List" and extract content until the next one.
+        sensor_list_starts = [m.start() for m in re.finditer(r"Sensor List: Environmental Monitoring", log_data)]
+        
+        # If no "Sensor List" found, return NA or an empty list depending on expected behavior
+        if not sensor_list_starts:
+            return ["NA: No sensor list found"]
+
+        for i, start_index in enumerate(sensor_list_starts):
+            switch_block_start = start_index
+            switch_block_end = len(log_data)
+            if i + 1 < len(sensor_list_starts):
+                switch_block_end = sensor_list_starts[i+1]
+            
+            current_switch_data = log_data[switch_block_start:switch_block_end]
+            
+            switch_number = i + 1
+            alarm_status = "OK" # Assume OK unless an alarm is found
+
+            # --- Check sensor states in "Sensor List: Environmental Monitoring" section ---
+            # Find the "Sensor List" part of the current switch block
+            sensor_section_match = re.search(r'Sensor List: Environmental Monitoring\s*([\s\S]*?)(?:Switch FAN Speed State Airflow direction|SW\s+PID|$)', current_switch_data, re.DOTALL)
+            if sensor_section_match:
+                sensor_lines = sensor_section_match.group(1).strip().split('\n')
+                for line in sensor_lines:
+                    # Check for "FAULTY" status in any sensor
+                    if re.search(r'\s+FAULTY\s+', line):
+                        alarm_status = "Not OK"
+                        break # Found an alarm, no need to check further sensors for this switch
+            
+            # If no sensor alarm, check power supply PIDs status
+            if alarm_status == "OK":
+                psu_pid_section_match = re.search(r'SW\s+PID.*?(---\s*|$)', current_switch_data, re.DOTALL)
+                if psu_pid_section_match:
+                    psu_pid_section = psu_pid_section_match.group(0)
+                    # Check for "No Input Power" or "Bad" status in PSU PIDs
+                    if re.search(r'No Input Power|Bad', psu_pid_section):
+                        alarm_status = "ALARM"
+            
+            results.append(f"Switch {switch_number}: {alarm_status}")
+            
+        return results
+    except Exception as e:
+        return [f"Error in get_power_supply_status: {str(e)}"]
 
 def get_debug_status(log_data):
     match = re.search(r"sh\w*\s*de\w*", log_data, re.IGNORECASE)
@@ -196,7 +260,7 @@ def process_directory(directory_path):
 
 def main():
     # For a single file
-    file_path = r"Mention Path here"
+    file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR135977300\PROD28FLOORSW01_172.16.3.28.txt"
     process_file(file_path)
 
 if __name__ == "__main__":
