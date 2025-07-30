@@ -92,18 +92,18 @@ def get_memory_info(log_data):
             used = int(match.group(2))
             free = int(match.group(3))
             utilization = (used / total) * 100
-            return {
-                "Total memory": total,
-                "Used memory": used,
-                "Free memory": free,
-                "Memory Utilization (%)": f"{utilization:.2f}%"
-            }
-        return {
-            "Total memory": "NA",
-            "Used memory": "NA",
-            "Free memory": "NA",
-            "Memory Utilization (%)": "NA"
-        }
+            return [
+                total,
+                used,
+                free,
+                f"{utilization:.2f}%"
+            ]
+        return [
+            "NA",
+            "NA",
+            "NA",
+            "NA"
+        ]
     except Exception as e:
         return f"Error in get_memory_info: {str(e)}"
 
@@ -226,36 +226,35 @@ def get_debug_status(log_data):
         return f"Error in get_debug_status: {str(e)}"
     
 def get_available_ports(log_data):
-    data = []
-    stack_switch = Stack_Check()
-    stack_size = stack_switch.stack_size(log_data)
-    start_match = re.search(r"(?:-+\s*)?(?:sh|show)\s+(?:int|interface|interfaces)\s+status(?:\s*-+)?", log_data, re.IGNORECASE)
-    end_match = re.search(r"(?:-+\s*)?(?:sh|show)\s+(?:int|interface|interfaces)\s+status\s+err-disabled(?:\s*-+)?", log_data, re.IGNORECASE) 
-    if start_match and end_match:
-        relevant_data = log_data[start_match.end():end_match.start()]
-        data = [[] for _ in range(stack_size + 1)]    
-        if relevant_data:
-            for line in relevant_data.strip().splitlines():
-                parts = line.split()
-                if 'notconnect' in parts and '1' in parts:
-                    try:
-                        switch_number = int(re.search(r"Gi(\d+)", parts[0]).group(1))
-                        status_index = parts.index('notconnect')
-                        if status_index + 1 < len(parts):
-                            vlan = parts[status_index + 1]
-                            port_number = parts[0]
-                            if vlan == '1' and switch_number <= stack_size:
-                                data[switch_number].append(port_number)
-                    except (ValueError, IndexError):
-                        continue
-                else: 
-                    return "N/A"
-            data = [sublist if sublist else ['N/A'] for sublist in data]
-            return data[1:] 
-    return [['N/A'] for _ in range(stack_size)]
+    start_marker = "------------------ show interfaces status ------------------"
+    end_marker = "------------------ show "
+    
+    match = re.search(f"{re.escape(start_marker)}(.*?){re.escape(end_marker)}", log_data, re.DOTALL)
+    if match:
+        section = match.group(1)
+        ports = {}
+        for line in section.strip().splitlines()[1:]:  # Skip the header line
+            parts = line.split()
+            if 'notconnect' in parts and '1' in parts:
+                try:
+                    interface = parts[0]
+                    switch_number = int(interface.split('/')[0].replace('Gi', '').replace('Te', '').replace('Ap', '').replace('Po', ''))
+                    if switch_number not in ports:
+                        ports[switch_number] = []
+                    ports[switch_number].append(interface)
+                except (ValueError, IndexError):
+                    continue
+        port_list = [ports.get(i, []) for i in range(1, max(ports.keys()) + 1 if ports else 1)]
+        count = sum(len(port) for port in port_list)
+        if count:
+            return [[len(port)] for port in port_list]
+        else:
+            return 0
 
 def get_half_duplex_ports(log_data):
     try:
+        stack_switch = Stack_Check()
+        get_stack_size = stack_switch.stack_size(log_data)
         match = re.findall(r"^(\S+).*a-half.*$", log_data, re.IGNORECASE | re.MULTILINE)
         if match:
             switch_interfaces = {}
@@ -268,12 +267,14 @@ def get_half_duplex_ports(log_data):
             half_duplex_ports_per_switch = [[len(switch_interfaces.get(str(i), []))] for i in range(1, max_switch_number + 1)]
             return half_duplex_ports_per_switch
         else:
-            return "N/A"
+            return ["NO"] * get_stack_size
     except Exception as e:
-        return [[str(e)]] * get_stack_size(log_data)  
+        return [[str(e)]] * get_stack_size
 
 def get_interface_remark(log_data):
     try:
+        stack_switch = Stack_Check()
+        get_stack_size = stack_switch.stack_size(log_data)
         match = re.findall(r"^(\S+).*a-half.*$", log_data, re.IGNORECASE | re.MULTILINE)
         if match:
             switch_interfaces = {}
@@ -287,16 +288,19 @@ def get_interface_remark(log_data):
             interface_remark = [sublist if sublist else ['N/A'] for sublist in interface_remark]
             return interface_remark
         else:
-            return "N/A"
+            return ["N/A"] * get_stack_size
     except Exception as e:
-        return [[f"Error in get_interface_remark: {str(e)}"]] * get_stack_size(log_data)
+        return [[f"Error in get_interface_remark: {str(e)}"]] * get_stack_size
 
-def get_stack_size(log_data):
+def get_nvram_config_update(log_data):
     try:
-        stack_check = Stack_Check()
-        return stack_check.stack_size(log_data)
+        match = re.search(r"NVRAM\s+config\s+last\s+updated\s+at\s+(.+)", log_data, re.IGNORECASE)
+        if match:
+            return ["Yes", match.group(1).strip().split('by')[0].strip()]
+        else:
+            return ["No", "NA"]
     except Exception as e:
-        return 0
+        return [f"Error: {str(e)}", "NA"]
     
 def get_critical_logs(log_data):
     try:
@@ -355,14 +359,14 @@ def process_file(file_path):
                 "Interface/Module Remark" : [get_interface_remark(log_data)],
                 "Any debug" : [get_debug_status(log_data)],
                 "Critical Logs": [get_critical_logs(log_data)], 
-                "Config Status": None, 
-                "Config Date": None
+                "Config Status": [get_nvram_config_update(log_data)[0]], 
+                "Config Date": [get_nvram_config_update(log_data)[1]]
             }
         else:
             data = {}
             file_name, hostname, model_number, serial_number, ip_address, uptime = [], [], [], [], [], []
             current_sw, last_reboot, cpu, memo, flash, critical = [], [], [], [], [], []
-            avail_free, duplex, interface_remark, config_status, config_data = [], [], [], [], []
+            avail_free, duplex, interface_remark, config_status, config_date = [], [], [], [], []
             stack_switch = Stack_Check()
             stack_size = stack_switch.stack_size(log_data)
             stack_switch_data = stack_switch.parse_ios_xe_stack_switch(log_data)
@@ -398,6 +402,8 @@ def process_file(file_path):
                 avail_free = get_available_ports(log_data)
                 duplex = get_half_duplex_ports(log_data)
                 interface_remark = get_interface_remark(log_data)
+                config_status.append(get_nvram_config_update(log_data)[0])
+                config_date.append(get_nvram_config_update(log_data)[1])
                 
             data["Filename"] = file_name
             data["Hostname"] = hostname
@@ -417,6 +423,8 @@ def process_file(file_path):
             data["Available Free Ports"] = avail_free
             data["Any Half Duplex"] = duplex
             data["Interface/Module Remark"] = interface_remark
+            data["Config Status"] = config_status
+            data["Config Save Date"] = config_date
         return data
     except Exception as e:
         print(f"Error in process_file: {str(e)}")
@@ -435,7 +443,7 @@ def process_directory(directory_path):
 def main():
     try:
         # file_path = r"C:\Users\shivanarayan.v\Downloads\PROD28FLOORSW01_172.16.3.28 1.txt"
-        file_path = r"C:\Users\shivanarayan.v\Downloads\UOBM-9200L-JOT-L03-05_10.31.99.14 1.txt"
+        file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR135977300\PROD029FLOORSW01_172.16.3.29.txt"
         print(process_file(file_path))
     except Exception as e:
         print(f"Error in main: {str(e)}")
