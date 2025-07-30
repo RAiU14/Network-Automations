@@ -24,8 +24,8 @@ class Stack_Check:
     
     def get_last_reboot_reason(self, data=None):
         target = data if data is not None else self.log_data
-        match = re.search(r"Last reload reason\s+:\s*\((.+)\)", target)
-        return match.group(1) if match else "NA"
+        match = re.search(r"Last reload reason\s+:\s+(.+)", target)
+        return match.group(1) if match else None
 
     def uptime(self, data=None):
         target = data if data is not None else self.log_data
@@ -74,7 +74,7 @@ class Stack_Check:
                 for item in stack_switch_items:
                     if len(item) > 1:
                         # Check if any info exists before adding
-                        if self.serial_number(item) or self.model_number(item) or self.uptime(item) or self.get_last_reboot_reason(item):
+                        if self.serial_number(item) or self.model_number(item) or self.uptime(item) or self.get_last_reboot_reason(item) is not None:
                             data[f'stack switch {switch_number} Serial_Number'] = self.serial_number(item)
                             data[f'stack switch {switch_number} Model_Number'] = self.model_number(item)
                             data[f'stack switch {switch_number} Uptime'] = self.uptime(item)

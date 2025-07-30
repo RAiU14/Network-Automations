@@ -310,7 +310,7 @@ def process_directory(directory_path):
 
 def main():
     try:
-        file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR135977300\PROD029FLOORSW01_172.16.3.29.txt"
+        file_path = r"Mention Path Here!"
         process_file(file_path)
     except Exception as e:
         print(f"Error in main: {str(e)}")
