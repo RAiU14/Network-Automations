@@ -113,9 +113,17 @@ def get_flash_info(log_data):
     else:
         False
 
-
 def get_fan_status(log_data):
-    return "OK" if re.search(r"\s+\d+\s+\d+\s+OK\s+Front to Back", log_data) else "Not OK"
+    switches = log_data.split("Sensor List: Environmental Monitoring")[1:]
+    fan_status = {}
+    for i, switch in enumerate(switches, start=1):
+        match = re.search(r'Switch FAN Speed State Airflow direction.*?(?=SW  PID)', switch, re.DOTALL)
+        if match:
+            fan_section = match.group(0)
+            fans = re.findall(r'\d+\s+\d+\s+(OK|[^O][^K])', fan_section)
+            status = 'OK' if all(fan == 'OK' for fan in fans) else 'Not OK'
+            fan_status[f'Switch {i}'] = status
+    return fan_status
 
 def get_temperature_status(log_data):
     try:
@@ -274,7 +282,7 @@ def process_directory(directory_path):
             return "No Valid Log Files"
 
 def main():
-    file_path = r"File Path"
+    file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR135977300\PROD029FLOORSW01_172.16.3.29.txt"
     process_file(file_path)
 
 if __name__ == "__main__":
