@@ -83,24 +83,36 @@ def get_memory_info(log_data):
     }
 
 def get_flash_info(log_data):
-    match = re.search(r"(\d+)\s+(\d+)\s+disk\s+rw\s+flash:", log_data)
-    if match:
-        total = int(match.group(1))
-        free = int(match.group(2))
-        used = total - free 
-        utilization = (used / total) * 100
-        return {
-            "Total flash memory": total,
-            "Used flash memory": used,
-            "Free flash memory": free,
-            "Used Flash (%)": f"{utilization:.2f}%"
-        }
-    return {
-        "Total flash memory": "NA",
-        "Used flash memory": "NA",
-        "Free flash memory": "NA",
-        "Used Flash (%)": "NA"
-    }
+    total_flashes = re.findall(r"show\s+flash(?:-\d+)?:\s*all", log_data)
+    flash_information = {}
+    if total_flashes:
+        for item in total_flashes: 
+            start_index = re.search(item, log_data)
+            end_index = re.search(r"show\s", log_data[start_index.span()[1]:])
+            flash_data = log_data[start_index.span()[1]:start_index.span()[1] + end_index.span()[0]]
+            m = re.findall(r'^\s*(\d+)\s+bytes\s+available\s+\((\d+)\s+bytes\s+used\)', flash_data, re.MULTILINE)
+            if m:
+                for available_str, used_str in m:
+                    available_bytes = int(available_str)
+                    used_bytes = int(used_str)
+                    flash_number = re.findall(r'\d+', item)
+                    if flash_number:
+                        total = available_bytes + used_bytes
+                        free = available_bytes
+                        used = total - free 
+                        utilization = (used / total) * 100
+                        flash_information [flash_number[0]] = [total, free, used, utilization]
+                    else:
+                        # This is only for 1 switch
+                        total = available_bytes + used_bytes
+                        free = available_bytes
+                        used = total - free 
+                        utilization = (used / total) * 100
+                        flash_information ['1'] = [total, free, used, utilization]
+        return flash_information
+    else:
+        False
+
 
 def get_fan_status(log_data):
     return "OK" if re.search(r"\s+\d+\s+\d+\s+OK\s+Front to Back", log_data) else "Not OK"
@@ -254,13 +266,15 @@ def process_file(file_path):
 
 def process_directory(directory_path):
     for filename in os.listdir(directory_path):
-        if filename.endswith('.txt'):
+        if filename.endswith('.txt') or filename.endswith('.log'):
             file_path = os.path.join(directory_path, filename)
             process_file(file_path)
+        else: 
+            return "No Valid Log Files"
 
 def main():
-    # For a single file
-    file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR135977300\PROD28FLOORSW01_172.16.3.28.txt"
+    # file_path = r"C:\Users\shivanarayan.v\Downloads\DRC01CORESW01_10.20.253.5.txt"
+    file_path = r"C:\Users\shivanarayan.v\Downloads\PROD029FLOORSW01_172.16.3.29.txt"
     process_file(file_path)
 
 if __name__ == "__main__":

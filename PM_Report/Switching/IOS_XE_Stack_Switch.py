@@ -21,6 +21,11 @@ class Stack_Check:
         target = data if data is not None else self.log_data
         match = re.search(r"Model Number\s+:\s+(\S+)", target)
         return match.group(1) if match else None
+    
+    def get_last_reboot_reason(self, data=None):
+        target = data if data is not None else self.log_data
+        match = re.search(r"Last reload reason:\s+(.+)", target)
+        return match.group(1) if match else "NA"
 
     def uptime(self, data=None):
         target = data if data is not None else self.log_data
@@ -30,8 +35,6 @@ class Stack_Check:
     def parse_ios_xe_stack_switch(self, content):
         try:
             data = {}
-            switch_data = []
-
             cleared_data_start = re.search('show version', content, re.IGNORECASE)
             if not cleared_data_start:
                 print("Missing 'show version' section")
@@ -77,17 +80,18 @@ class Stack_Check:
                             data[f'stack switch {switch_number} model_number'] = self.model_number(item)
                             data[f'stack switch {switch_number} uptime'] = self.uptime(item)
                             switch_number += 1
-                switch_data.append(data)
-                return switch_data
+                return data
             else:
-                return 404
+                return False
         except Exception as e:
             print(f"Error parsing IOS XE stack switch: {e}")
             return None
 
 if __name__ == "__main__":
-    file_name = r"Mention Path Here"
+    file_name = r"C:\Users\shivanarayan.v\Downloads\PROD029FLOORSW01_172.16.3.29.txt"
+    with open(file_name) as file:
+        content = file.read()
     # You can optionally pass `log_data` as None if not used directly
     stack_check = Stack_Check()
-    result = stack_check.parse_ios_xe_stack_switch(file_name)
+    result = stack_check.parse_ios_xe_stack_switch(content)
     print(result)
