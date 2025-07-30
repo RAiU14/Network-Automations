@@ -114,7 +114,10 @@
     <form id="uploadForm" action="{{ url_for('upload') }}" method="POST" enctype="multipart/form-data">
       
       <label for="ticket">Ticket Number / Comment (Ticket Number is required):</label>
-      <input type="text" name="ticket" id="ticket" placeholder="Enter ticket number here" required />
+      <input type="text" name="ticket" id="ticket" placeholder="Enter ticket number (e.g., SVR137572722)" required />
+      <div id="ticketError" style="color: red; font-size: 0.9rem; margin-top: 5px; display: none;">
+        Ticket number must start with 'SVR' followed by numbers (e.g., SVR137572722)
+      </div>
 
       <label for="comment" style="margin-top: 10px;">Comment (optional):</label>
       <textarea name="comment" id="comment" placeholder="Add any comments here"></textarea>
@@ -146,6 +149,8 @@
     const fileInput = document.getElementById('fileInput');
     const fileText = document.getElementById('fileText');
     const fileName = document.getElementById('fileName');
+    const ticketInput = document.getElementById('ticket');
+    const ticketError = document.getElementById('ticketError');
 
     // Function to update UI when file is selected
     function updateFileDisplay(file) {
@@ -169,6 +174,23 @@
       fileName.style.display = 'none';
       fileInput.value = '';
     }
+
+    // Function for ticket number validation
+    function validateTicketNumber(ticketNumber) {
+      const pattern = /^SVR\d+$/;
+      return pattern.test(ticketNumber);
+    }
+
+    ticketInput.addEventListener('input', function() {
+      const ticketValue = this.value.trim();
+      if (ticketValue && !validateTicketNumber(ticketValue)) {
+        ticketError.style.display = 'block';
+        this.style.borderColor = 'red';
+      } else {
+        ticketError.style.display = 'none';
+        this.style.borderColor = '#aaa';
+      }
+    });
 
     // Click to browse
     fileDropArea.addEventListener('click', () => fileInput.click());
@@ -214,9 +236,24 @@
 
     // Form validation
     document.getElementById('uploadForm').addEventListener('submit', e => {
-      if(!fileInput.files.length){
+      const ticketValue = ticketInput.value.trim();
+      
+      if (!ticketValue) {
+        e.preventDefault();
+        alert('Ticket number is required.');
+        return;
+      }
+      
+      if (!validateTicketNumber(ticketValue)) {
+        e.preventDefault();
+        alert('Ticket number must start with "SVR" followed by numbers (e.g., SVR137572722)');
+        return;
+      }
+      
+      if (!fileInput.files.length) {
         e.preventDefault();
         alert('Please upload a zip file.');
+        return;
       }
     });
   </script>
