@@ -224,74 +224,70 @@ def get_debug_status(log_data):
             return "Command not found in logs."
     except Exception as e:
         return f"Error in get_debug_status: {str(e)}"
-
+    
 def get_available_ports(log_data):
-    try:
-        start_marker = "------------------ show interfaces status ------------------"
-        end_marker_pattern = r"(?:\n-{20,}\s*show\s+|$)"
-
-        match = re.search(f"{re.escape(start_marker)}(.*?){end_marker_pattern}", log_data, re.DOTALL | re.IGNORECASE)
-
-        if match:
-            interface_status_output = match.group(1)
-            lines = interface_status_output.strip().splitlines()
-
-            if lines and "Port" in lines[0] and "Status" in lines[0]:
-                lines = lines[1:]
-
-            switch_available_ports = {}
-
-            for line in lines:
-                line_match = re.match(r'^(Gi|Ap|Te(\d+)/\S+)\s+.*?(\bconnected|\bnotconnect|\berr-disabled)\s+(\S+)\s+.*$', line)
-
-                if line_match:
-                    switch_number = int(line_match.group(2))
-                    status = line_match.group(3).lower()
-                    vlan = line_match.group(4)
-
-                    if status == "notconnect" and vlan == "1":
-                        if switch_number not in switch_available_ports:
-                            switch_available_ports[switch_number] = 0
-                        switch_available_ports[switch_number] += 1
-
-            max_switch_number = max(switch_available_ports.keys(), default=0)
-            result = [switch_available_ports.get(i, 0) for i in range(1, max_switch_number + 1)]
-            if result == []:
-                return 0
-            else:
-                return result
-        else:
-            return ["NA: 'show interfaces status' section not found."] * get_stack_size(log_data)
-    except Exception as e:
-        return [f"Error in get_available_ports: {str(e)}"] * get_stack_size(log_data)
+    data = []
+    stack_switch = Stack_Check()
+    stack_size = stack_switch.stack_size(log_data)
+    start_match = re.search(r"(?:-+\s*)?(?:sh|show)\s+(?:int|interface|interfaces)\s+status(?:\s*-+)?", log_data, re.IGNORECASE)
+    end_match = re.search(r"(?:-+\s*)?(?:sh|show)\s+(?:int|interface|interfaces)\s+status\s+err-disabled(?:\s*-+)?", log_data, re.IGNORECASE) 
+    if start_match and end_match:
+        relevant_data = log_data[start_match.end():end_match.start()]
+        data = [[] for _ in range(stack_size + 1)]    
+        if relevant_data:
+            for line in relevant_data.strip().splitlines():
+                parts = line.split()
+                if 'notconnect' in parts and '1' in parts:
+                    try:
+                        switch_number = int(re.search(r"Gi(\d+)", parts[0]).group(1))
+                        status_index = parts.index('notconnect')
+                        if status_index + 1 < len(parts):
+                            vlan = parts[status_index + 1]
+                            port_number = parts[0]
+                            if vlan == '1' and switch_number <= stack_size:
+                                data[switch_number].append(port_number)
+                    except (ValueError, IndexError):
+                        continue
+                else: 
+                    return "N/A"
+            data = [sublist if sublist else ['N/A'] for sublist in data]
+            return data[1:] 
+    return [['N/A'] for _ in range(stack_size)]
 
 def get_half_duplex_ports(log_data):
     try:
         match = re.findall(r"^(\S+).*a-half.*$", log_data, re.IGNORECASE | re.MULTILINE)
-        switch_interfaces = {}
-        for interface in match:
-            switch_number = re.search(r'\D+(\d+)/', interface).group(1)
-            if switch_number not in switch_interfaces:
-                switch_interfaces[switch_number] = []
-            switch_interfaces[switch_number].append(interface)
-        max_switch_number = max(map(int, switch_interfaces.keys()), default=0)
-        half_duplex_ports_per_switch = [len(switch_interfaces.get(str(i), [])) for i in range(1, max_switch_number + 1)]
-        return half_duplex_ports_per_switch
+        if match:
+            switch_interfaces = {}
+            for interface in match:
+                switch_number = re.search(r'\D+(\d+)/', interface).group(1)
+                if switch_number not in switch_interfaces:
+                    switch_interfaces[switch_number] = []
+                switch_interfaces[switch_number].append(interface)
+            max_switch_number = max(map(int, switch_interfaces.keys()), default=0)
+            half_duplex_ports_per_switch = [[len(switch_interfaces.get(str(i), []))] for i in range(1, max_switch_number + 1)]
+            return half_duplex_ports_per_switch
+        else:
+            return "N/A"
     except Exception as e:
-        return [str(e)] * get_stack_size(log_data)
+        return [[str(e)]] * get_stack_size(log_data)  
 
 def get_interface_remark(log_data):
     try:
         match = re.findall(r"^(\S+).*a-half.*$", log_data, re.IGNORECASE | re.MULTILINE)
-        switch_interfaces = {}
-        for interface in match:
-            switch_number = re.search(r'\D+(\d+)/', interface).group(1)
-            if switch_number not in switch_interfaces:
-                switch_interfaces[switch_number] = []
-            switch_interfaces[switch_number].append(interface)
-        max_switch_number = max(map(int, switch_interfaces.keys()), default=0)
-        interface_remark = [switch_interfaces.get(str(i), []) for i in range(1, max_switch_number + 1)]
-        return interface_remark
+        if match:
+            switch_interfaces = {}
+            for interface in match:
+                switch_number = re.search(r'\D+(\d+)/', interface).group(1)
+                if switch_number not in switch_interfaces:
+                    switch_interfaces[switch_number] = []
+                switch_interfaces[switch_number].append(interface)
+            max_switch_number = max(map(int, switch_interfaces.keys()), default=0)
+            interface_remark = [switch_interfaces.get(str(i), []) for i in range(1, max_switch_number + 1)]
+            interface_remark = [sublist if sublist else ['N/A'] for sublist in interface_remark]
+            return interface_remark
+        else:
+            return "N/A"
     except Exception as e:
         return [[f"Error in get_interface_remark: {str(e)}"]] * get_stack_size(log_data)
 
@@ -354,9 +350,9 @@ def process_file(file_path):
                 "Fan status": [get_fan_status(log_data)],
                 "Temperature status": [get_temperature_status(log_data)],
                 "PowerSupply status": [get_power_supply_status(log_data)],
-                "Available Free Ports" : get_available_ports(log_data),
-                "Half Duplex Ports" : get_half_duplex_ports(log_data),
-                "Interface/Module Remark" : get_interface_remark,
+                "Available Free Ports" : [get_available_ports(log_data)],
+                "Half Duplex Ports" : [get_half_duplex_ports(log_data)],
+                "Interface/Module Remark" : [get_interface_remark(log_data)],
                 "Any debug" : [get_debug_status(log_data)],
                 "Critical Logs": [get_critical_logs(log_data)], 
                 "Config Status": None, 
@@ -399,9 +395,9 @@ def process_file(file_path):
                 temp = get_temperature_status(log_data)
                 psu = get_power_supply_status(log_data)
                 critical.append(get_critical_logs(log_data))
-                avail_free.append(get_available_ports(log_data))
-                duplex.append(get_half_duplex_ports(log_data))
-                interface_remark.append(get_interface_remark(log_data))
+                avail_free = get_available_ports(log_data)
+                duplex = get_half_duplex_ports(log_data)
+                interface_remark = get_interface_remark(log_data)
                 
             data["Filename"] = file_name
             data["Hostname"] = hostname
@@ -421,8 +417,6 @@ def process_file(file_path):
             data["Available Free Ports"] = avail_free
             data["Any Half Duplex"] = duplex
             data["Interface/Module Remark"] = interface_remark
-            print_data(data)
-            
         return data
     except Exception as e:
         print(f"Error in process_file: {str(e)}")
@@ -440,10 +434,9 @@ def process_directory(directory_path):
 
 def main():
     try:
-        # file_path = r"C:\Users\shivanarayan.v\Downloads\UOBM-C9200-AST-OA-03_10.58.40.12.txt"
-        file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR135977300\PROD28FLOORSW01_172.16.3.28.txt"
-        # file_path = r"C:\Users\shivanarayan.v\Downloads\UOBM-C9200-JOT-L01-01_10.31.99.100.txt"
-        process_file(file_path)
+        # file_path = r"C:\Users\shivanarayan.v\Downloads\PROD28FLOORSW01_172.16.3.28 1.txt"
+        file_path = r"C:\Users\shivanarayan.v\Downloads\UOBM-9200L-JOT-L03-05_10.31.99.14 1.txt"
+        print(process_file(file_path))
     except Exception as e:
         print(f"Error in main: {str(e)}")
 
