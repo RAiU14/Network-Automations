@@ -320,7 +320,7 @@ def WLC(path):
     print(temperature(path))
  
 if __name__ == '__main__':
-    path = "Test WLC 5508/10.119.138.3.txt"
+    path = "Log_samples\AIR-CT5508-K9_1.txt"
 
     # Problems : model & serial number, memory , power
     # no issue with memory for 3500

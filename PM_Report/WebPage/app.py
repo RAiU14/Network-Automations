@@ -13,7 +13,7 @@ def allowed_file(filename):
 
 @app.route('/')
 def index():
-    technologies = ['Wireless', 'Switching', 'Security', 'Others']  # expand as needed
+    technologies = ['Wireless', 'Switching', 'Security', 'Others'] 
     return render_template('upload.html', technologies=technologies)
 
 @app.route('/upload', methods=['POST'])
@@ -40,12 +40,10 @@ def upload():
     ticket_folder = os.path.join(UPLOAD_FOLDER, ticket)
     os.makedirs(ticket_folder, exist_ok=True)
 
-    # Save the uploaded file
-    filename = "logs.zip"
+    filename = f"{ticket}.zip"
     file_path = os.path.join(ticket_folder, filename)
     file.save(file_path)
 
-    # Save a simple metadata file
     meta_path = os.path.join(ticket_folder, 'metadata.txt')
     with open(meta_path, 'w') as f:
         f.write(f'Ticket Number: {ticket}\n')
@@ -58,5 +56,4 @@ def upload():
 if __name__ == '__main__':
     if not os.path.exists(UPLOAD_FOLDER):
         os.makedirs(UPLOAD_FOLDER)
-    # Run on all IPs (0.0.0.0) to allow LAN access
     app.run(host='0.0.0.0', port=5000, debug=True)
