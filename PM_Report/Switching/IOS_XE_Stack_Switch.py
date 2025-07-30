@@ -88,7 +88,7 @@ class Stack_Check:
             return None
 
 if __name__ == "__main__":
-    file_name = r"C:\Users\shivanarayan.v\Downloads\PROD029FLOORSW01_172.16.3.29.txt"
+    file_name = r""
     with open(file_name) as file:
         content = file.read()
     # You can optionally pass `log_data` as None if not used directly

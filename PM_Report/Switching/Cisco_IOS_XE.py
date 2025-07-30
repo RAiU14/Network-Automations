@@ -12,8 +12,8 @@ def get_model_number(log_data):
 
 def get_ip_address(file_path):
     file_name = os.path.basename(file_path)
-    match = re.search(r"_(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\.txt", file_name)
-    return match.group(1) if match else "NA"
+    match = re.search(r"_(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\.(txt|log)", file_name)
+    return [file_name, match.group(1) if match else "NA"]
 
 def get_serial_number(log_data):
     match = re.search(r"System Serial Number\s+:\s+(\S+)", log_data)
@@ -243,10 +243,11 @@ def process_file(file_path):
     with open(file_path, 'r') as file:
         log_data = file.read()
     data = {
+        "Filename": get_ip_address(file_path)[0],
         "Hostname": get_hostname(log_data),
         "Model number": get_model_number(log_data),
         "Serial number": get_serial_number(log_data),
-        "Ip address" : get_ip_address(file_path),
+        "Ip address" : get_ip_address(file_path)[1],
         "Uptime": get_uptime(log_data),
         "Current s/w version": get_current_sw_version(log_data),
         "Last Reboot Reason": get_last_reboot_reason(log_data),
