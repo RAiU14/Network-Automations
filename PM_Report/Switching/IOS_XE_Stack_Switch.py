@@ -24,7 +24,7 @@ class Stack_Check:
     
     def get_last_reboot_reason(self, data=None):
         target = data if data is not None else self.log_data
-        match = re.search(r"Last reload reason\s+:\(.+)", target)
+        match = re.search(r"Last reload reason\s+:\s*\((.+)\)", target)
         return match.group(1) if match else "NA"
 
     def uptime(self, data=None):
