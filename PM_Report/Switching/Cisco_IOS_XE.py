@@ -1,7 +1,13 @@
 import re
 import os
+import logging
 import pprint as pp
 from IOS_XE_Stack_Switch import *
+
+log_dir = os.path.join(os.path.dirname(__file__), "logs")
+os.makedirs(log_dir, exist_ok=True)
+logging.basicConfig(filename=os.path.join(log_dir,  f"{datetime.datetime.today().strftime('%Y-%m-%d')}.log"), level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 def get_hostname(log_data):
     try:
@@ -42,9 +48,10 @@ def get_uptime(log_data):
 def get_current_sw_version(log_data):
     try:
         match = re.search(r"Cisco IOS XE Software, Version\s+([\d.]+)", log_data)
-        return match.group(1) if match else "NA"
+        return match.group(1) if match else False
     except Exception as e:
-        return f"Error in get_current_sw_version: {str(e)}"
+        logging.error(f"Error in get_current_sw_version: {str(e)}")
+        return False
 
 def get_last_reboot_reason(log_data):
     try:
@@ -487,16 +494,35 @@ def process_file(file_path):
     except Exception as e:
         print(f"Error in process_file: {str(e)}")
 
+def ios_xe_check(log_data):
+    if get_current_sw_version(log_data): 
+        return True
+    else:
+        return False
+
 def process_directory(directory_path):
+    data = []
     try:
         for filename in os.listdir(directory_path):
             if filename.endswith('.txt') or filename.endswith('.log'):
                 file_path = os.path.join(directory_path, filename)
-                process_file(file_path)
+                with open(os.path.join(directory_path, filename)) as file:
+                    log_data = file.read()
+                ios_xe = ios_xe_check(log_data)
+                if ios_xe:
+                    logging.debug(f"{filename} is IOS XE File. Appending value!")
+                    switch_data = process_file(file_path)
+                    data.append(switch_data)
+                else:
+                    logging.debug(f"{filename} was not IOS XE. Discarding!")
             else:
-                print("No Valid Log Files")
+                logging.warning("No Valid Log Files")
+        logging.debug("Data Extracted Successfully!")
+        return data
     except Exception as e:
-        print(f"Error in process_directory: {str(e)}")
+        logging.error(f"Error in process_directory: {str(e)}")
+        return 500
+
 
 def main():
     try:
