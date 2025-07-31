@@ -272,4 +272,9 @@ PM_Report/Switching/Cisco_9000_switch.py
 example_ticket.xlsx
 updated_output.xlsx
 PM_Report/Switching/Cisco 9000 switch.py
+<<<<<<< HEAD
 Database/Uploads/
+=======
+uploads/
+PM_Report\Switching\remark.py
+>>>>>>> a5296f3c1cca7d033efbd331be06225a0a8da7e6
