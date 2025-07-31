@@ -1,6 +1,13 @@
 import re
 import os
+import logging
+import pprint as pp
 from IOS_XE_Stack_Switch import *
+
+log_dir = os.path.join(os.path.dirname(__file__), "logs")
+os.makedirs(log_dir, exist_ok=True)
+logging.basicConfig(filename=os.path.join(log_dir,  f"{datetime.datetime.today().strftime('%Y-%m-%d')}.log"), level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 def get_hostname(log_data):
     try:
@@ -20,7 +27,7 @@ def get_ip_address(file_path):
     try:
         file_name = os.path.basename(file_path)
         match = re.search(r"_(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\.(txt|log)", file_name)
-        return [file_name, match.group(1) if match else "NA"]
+        return [file_name, match.group(1) if match else "Check manually"]
     except Exception as e:
         return [f"Error in get_ip_address: {str(e)}", "NA"]
 
@@ -41,9 +48,10 @@ def get_uptime(log_data):
 def get_current_sw_version(log_data):
     try:
         match = re.search(r"Cisco IOS XE Software, Version\s+([\d.]+)", log_data)
-        return match.group(1) if match else "NA"
+        return match.group(1) if match else False
     except Exception as e:
-        return f"Error in get_current_sw_version: {str(e)}"
+        logging.error(f"Error in get_current_sw_version: {str(e)}")
+        return False
 
 def get_last_reboot_reason(log_data):
     try:
@@ -127,13 +135,13 @@ def get_flash_info(log_data):
                             free = available_bytes
                             used = total - free
                             utilization = (used / total) * 100
-                            flash_information[flash_number[0]] = [total, free, used, utilization]
+                            flash_information[flash_number[0]] = [total, used, free, utilization]
                         else:
                             total = available_bytes + used_bytes
                             free = available_bytes
                             used = total - free
                             utilization = (used / total) * 100
-                            flash_information['1'] = [total, free, used, utilization]
+                            flash_information['1'] = [total, used, free, utilization]
             return flash_information
         else:
             return "No flash information found"
@@ -143,15 +151,15 @@ def get_flash_info(log_data):
 def get_fan_status(log_data):
     try:
         switches = log_data.split("Sensor List: Environmental Monitoring")[1:]
-        fan_status = {}
+        status = []
         for i, switch in enumerate(switches, start=1):
             match = re.search(r'Switch FAN Speed State Airflow direction.*?(?=SW  PID)', switch, re.DOTALL)
             if match:
                 fan_section = match.group(0)
                 fans = re.findall(r'\d+\s+\d+\s+(OK|[^O][^K])', fan_section)
-                status = 'OK' if all(fan == 'OK' for fan in fans) else 'Not OK'
-                fan_status[f'Switch {i}'] = status
-        return fan_status
+                status.append('OK' if all(fan == 'OK' for fan in fans) else 'Not OK')
+                # fan_status[f'Switch {i}'] = status
+        return status
     except Exception as e:
         return f"Error in get_fan_status: {str(e)}"
 
@@ -166,7 +174,7 @@ def get_temperature_status(log_data):
             switch_temps[switch].append(temp[2])
         result = []
         for switch, temps in switch_temps.items():
-            result.append(f"Switch {switch} Temperature: {'OK' if all(temp.upper() == 'GREEN' for temp in temps) else 'Not OK'}")
+            result.append('OK' if all(temp.upper() == 'GREEN' for temp in temps) else 'Not OK')
         return result
     except Exception as e:
         return f"Error in get_temperature_status: {str(e)}"
@@ -203,8 +211,7 @@ def get_power_supply_status(log_data):
                     psu_pid_section = psu_pid_section_match.group(0)
                     if re.search(r'No Input Power|Bad', psu_pid_section):
                         alarm_status = "ALARM"
-
-            results.append(f"Switch {switch_number}: {alarm_status}")
+            results.append(alarm_status)
 
         return results
     except Exception as e:
@@ -226,34 +233,37 @@ def get_debug_status(log_data):
         return f"Error in get_debug_status: {str(e)}"
     
 def get_available_ports(log_data):
-    start_marker = "------------------ show interfaces status ------------------"
-    end_marker = "------------------ show "
-    
-    match = re.search(f"{re.escape(start_marker)}(.*?){re.escape(end_marker)}", log_data, re.DOTALL)
-    if match:
-        section = match.group(1)
-        ports = {}
-        for line in section.strip().splitlines()[1:]:  # Skip the header line
-            parts = line.split()
-            if 'notconnect' in parts and '1' in parts:
-                try:
-                    interface = parts[0]
-                    switch_number = int(interface.split('/')[0].replace('Gi', '').replace('Te', '').replace('Ap', '').replace('Po', ''))
-                    if switch_number not in ports:
-                        ports[switch_number] = []
-                    ports[switch_number].append(interface)
-                except (ValueError, IndexError):
-                    continue
-        port_list = [ports.get(i, []) for i in range(1, max(ports.keys()) + 1 if ports else 1)]
-        count = sum(len(port) for port in port_list)
-        if count:
-            return [[len(port)] for port in port_list]
-        else:
-            return 0
+    try:
+        start_marker = "------------------ show interfaces status ------------------"
+        end_marker = "------------------ show "
+        
+        match = re.search(f"{re.escape(start_marker)}(.*?){re.escape(end_marker)}", log_data, re.DOTALL)
+        if match:
+            section = match.group(1)
+            ports = {}
+            for line in section.strip().splitlines()[1:]:  # Skip the header line
+                parts = line.split()
+                if 'notconnect' in parts and '1' in parts:
+                    try:
+                        interface = parts[0]
+                        switch_number = int(interface.split('/')[0].replace('Gi', '').replace('Te', '').replace('Ap', '').replace('Po', ''))
+                        if switch_number not in ports:
+                            ports[switch_number] = []
+                        ports[switch_number].append(interface)
+                    except (ValueError, IndexError):
+                        continue
+            port_list = [ports.get(i, []) for i in range(1, max(ports.keys()) + 1 if ports else 1)]
+            count = sum(len(port) for port in port_list)
+            if count:
+                return [[len(port)] for port in port_list]
+            else:
+                return 0
+    except Exception as e:
+        return [[str(e)]]
 
 def get_half_duplex_ports(log_data):
     try:
-        stack_switch = Stack_Check()
+        stack_switch = Stack_Check(log_data)
         get_stack_size = stack_switch.stack_size(log_data)
         match = re.findall(r"^(\S+).*a-half.*$", log_data, re.IGNORECASE | re.MULTILINE)
         if match:
@@ -273,7 +283,7 @@ def get_half_duplex_ports(log_data):
 
 def get_interface_remark(log_data):
     try:
-        stack_switch = Stack_Check()
+        stack_switch = Stack_Check(log_data)
         get_stack_size = stack_switch.stack_size(log_data)
         match = re.findall(r"^(\S+).*a-half.*$", log_data, re.IGNORECASE | re.MULTILINE)
         if match:
@@ -338,34 +348,60 @@ def process_file(file_path):
         data = {}
         stack = check_stack(log_data)
         if not stack:
+            memory_info = get_memory_info(log_data)
+            flash_info = get_flash_info(log_data)
+            if isinstance(flash_info, dict):
+                flash_info = flash_info.get('1', ["NA", "NA", "NA", "NA"])
+            elif isinstance(flash_info, str):
+                flash_info = ["NA", "NA", "NA", "NA"]
+            
             data = {
-                "Filename": [get_ip_address(file_path)[0]],
-                "Hostname": [get_hostname(log_data)],
-                "Model number": [get_model_number(log_data)],
-                "Serial number": [get_serial_number(log_data)],
-                "Ip address" : [get_ip_address(file_path)[1]],
-                "Uptime": [get_uptime(log_data)],
-                "Current s/w version": [get_current_sw_version(log_data)],
-                "Last Reboot Reason": [get_last_reboot_reason(log_data)],
-                "Debug Status": [get_debug_status(log_data)],
-                "CPU Utilization": [get_cpu_utilization(log_data)],
-                "Memory": [get_memory_info(log_data)],
-                "Flash": [get_flash_info(log_data)],
-                "Fan status": [get_fan_status(log_data)],
-                "Temperature status": [get_temperature_status(log_data)],
-                "PowerSupply status": [get_power_supply_status(log_data)],
-                "Available Free Ports" : [get_available_ports(log_data)],
-                "Half Duplex Ports" : [get_half_duplex_ports(log_data)],
-                "Interface/Module Remark" : [get_interface_remark(log_data)],
-                "Any debug" : [get_debug_status(log_data)],
-                "Critical Logs": [get_critical_logs(log_data)], 
-                "Config Status": [get_nvram_config_update(log_data)[0]], 
-                "Config Date": [get_nvram_config_update(log_data)[1]]
-            }
+                        "File name": [get_ip_address(file_path)[0]],
+                        "Host name": [get_hostname(log_data)],
+                        "Model number": [get_model_number(log_data)],
+                        "Serial number": [get_serial_number(log_data)],
+                        "Interface ip address": [get_ip_address(file_path)[1]],
+                        "Uptime": [get_uptime(log_data)],
+                        "Current s/w version": [get_current_sw_version(log_data)],
+                        "Last Reboot Reason": [get_last_reboot_reason(log_data)],
+                        "Any Debug?": [get_debug_status(log_data)],
+                        "CPU Utilization": [get_cpu_utilization(log_data)],
+                        "Total memory": [memory_info[0]],
+                        "Used memory": [memory_info[1]],
+                        "Free memory": [memory_info[2]],
+                        "Memory Utilization (%)": [memory_info[3]],
+                        "Total flash memory": [flash_info[0]],
+                        "Used flash memory": [flash_info[1]],
+                        "Free flash memory": [flash_info[2]],
+                        "Used Flash (%)": [f"{flash_info[3]:.2f}%" if isinstance(flash_info[3], (int, float)) else flash_info[3]],
+                        "Fan status": [get_fan_status(log_data)],
+                        "Temperature status": [get_temperature_status(log_data)],
+                        "PowerSupply status": [get_power_supply_status(log_data)],
+                        "Available Free Ports": [get_available_ports(log_data)],
+                        "Any Half Duplex": [get_half_duplex_ports(log_data)],
+                        "Interface/Module Remark": [get_interface_remark(log_data)],
+                        "Config Status": [get_nvram_config_update(log_data)[0]],
+                        "Config Save Date": [get_nvram_config_update(log_data)[1]],
+                        "Critical logs": [get_critical_logs(log_data)],
+                        # Add default values for the remaining columns
+                        "Current SW EOS": ["NA"],
+                        "Suggested s/w ver": ["NA"],
+                        "s/w release date": ["NA"],
+                        "Latest S/W version": ["NA"],
+                        "Production s/w is deffered or not?": ["NA"],
+                        "End-of-Sale Date: HW": ["NA"],
+                        "Last Date of Support: HW": ["NA"],
+                        "End of Routine Failure Analysis Date: HW": ["NA"],
+                        "End of Vulnerability/Security Support: HW": ["NA"],
+                        "End of SW Maintenance Releases Date: HW": ["NA"],
+                        "Remark": ["NA"]
+                    }
         else:
             data = {}
             file_name, hostname, model_number, serial_number, ip_address, uptime = [], [], [], [], [], []
             current_sw, last_reboot, cpu, memo, flash, critical = [], [], [], [], [], []
+            total_memory, used_memory, free_memory, memory_utilization = [], [], [], []
+            total_flash, used_flash, free_flash, flash_utilization = [], [], [], []
             avail_free, duplex, interface_remark, config_status, config_date = [], [], [], [], []
             stack_switch = Stack_Check()
             stack_size = stack_switch.stack_size(log_data)
@@ -378,23 +414,34 @@ def process_file(file_path):
                     serial_number.append(get_serial_number(log_data))
                     uptime.append(get_uptime(log_data))
                     last_reboot.append(get_last_reboot_reason(log_data))
-                    flash.append(flash_memory_details['1'])
-
                 else:
                     file_name.append(get_ip_address(file_path)[0] + (f"_Stack_{str(item+1)}"))
                     model_number.append(stack_switch_data[f'stack switch {item + 1} Model_Number'])
                     serial_number.append(stack_switch_data[f'stack switch {item + 1} Serial_Number'])
                     uptime.append(stack_switch_data[f'stack switch {item + 1} Uptime'])
                     last_reboot.append(stack_switch_data[f'stack switch {item + 1} Last Reboot'])
-                    if flash_memory_details[str(item)]:
-                        flash.append(flash_memory_details[str(item)])
                 
+                memo = get_memory_info(log_data)
+                total_memory.append(memo[0])
+                used_memory.append(memo[1])
+                free_memory.append(memo[2])
+                memory_utilization.append(memo[3])
+
+                if isinstance(flash_memory_details, dict) and str(item+1) in flash_memory_details:
+                    flash = flash_memory_details[str(item+1)]
+                elif isinstance(flash_memory_details, dict) and '1' in flash_memory_details:
+                    flash = flash_memory_details['1']
+                else:
+                    flash = ["NA", "NA", "NA", "NA"]
+                total_flash.append(flash[0])
+                used_flash.append(flash[1])
+                free_flash.append(flash[2])
+                flash_utilization.append(f"{flash[3]:.2f}%" if isinstance(flash[3], (int, float)) else flash[3])
                 
                 hostname.append(get_hostname(log_data))
                 ip_address.append(get_ip_address(file_path)[1])
                 current_sw.append(get_current_sw_version(log_data))
                 cpu.append(get_cpu_utilization(log_data))
-                memo.append(get_memory_info(log_data))
                 fan = get_fan_status(log_data)
                 temp = get_temperature_status(log_data)
                 psu = get_power_supply_status(log_data)
@@ -405,46 +452,83 @@ def process_file(file_path):
                 config_status.append(get_nvram_config_update(log_data)[0])
                 config_date.append(get_nvram_config_update(log_data)[1])
                 
-            data["Filename"] = file_name
-            data["Hostname"] = hostname
-            data["Model Number"] = model_number
-            data["IP Address"] = ip_address
+            data["File name"] = file_name
+            data["Host name"] = hostname
+            data["Model number"] = model_number
+            data["Serial number"] = serial_number
+            data["Interface ip address"] = ip_address
             data["Uptime"] = uptime
-            data["Current S/W Version"] = current_sw
-            data["Uptime"] = uptime
+            data["Current s/w version"] = current_sw
             data["Last Reboot Reason"] = last_reboot
-            data["CPU"] = cpu
-            data["Memory"] = memo
-            data["flash"] = flash
-            data["Fan Status"] = fan
-            data["Temperature Status"] = temp
-            data["PSU Status"] = psu
-            data["Critial Logs"] = critical
+            data["Any Debug?"] = [get_debug_status(log_data) for _ in range(stack_size)]
+            data["CPU Utilization"] = cpu
+            data["Total memory"] = total_memory
+            data["Used memory"] = used_memory
+            data["Free memory"] = free_memory
+            data["Memory Utilization (%)"] = memory_utilization
+            data["Total flash memory"] = total_flash
+            data["Used flash memory"] = used_flash
+            data["Free flash memory"] = free_flash
+            data["Used Flash (%)"] = flash_utilization
+            data["Fan status"] = fan
+            data["Temperature status"] = temp
+            data["PowerSupply status"] = psu
+            data["Critical logs"] = critical
             data["Available Free Ports"] = avail_free
             data["Any Half Duplex"] = duplex
             data["Interface/Module Remark"] = interface_remark
             data["Config Status"] = config_status
             data["Config Save Date"] = config_date
+            data["Current SW EOS"] = ["Yet to check"] * stack_size
+            data["Suggested s/w ver"] = ["Yet to check"] * stack_size
+            data["s/w release date"] = ["Yet to check"] * stack_size
+            data["Latest S/W version"] = ["Yet to check"] * stack_size
+            data["Production s/w is deffered or not?"] = ["Yet to check"] * stack_size
+            data["End-of-Sale Date: HW"] = ["Yet to check"] * stack_size
+            data["Last Date of Support: HW"] = ["Yet to check"] * stack_size
+            data["End of Routine Failure Analysis Date: HW"] = ["Yet to check"] * stack_size
+            data["End of Vulnerability/Security Support: HW"] = ["Yet to check"] * stack_size
+            data["End of SW Maintenance Releases Date: HW"] = ["Yet to check"] * stack_size
+            data["Remark"] = ["Yet to check"] * stack_size
         return data
     except Exception as e:
         print(f"Error in process_file: {str(e)}")
 
+def ios_xe_check(log_data):
+    if get_current_sw_version(log_data): 
+        return True
+    else:
+        return False
+
 def process_directory(directory_path):
+    data = []
     try:
         for filename in os.listdir(directory_path):
             if filename.endswith('.txt') or filename.endswith('.log'):
                 file_path = os.path.join(directory_path, filename)
-                process_file(file_path)
+                with open(os.path.join(directory_path, filename)) as file:
+                    log_data = file.read()
+                ios_xe = ios_xe_check(log_data)
+                if ios_xe:
+                    logging.debug(f"{filename} is IOS XE File. Appending value!")
+                    switch_data = process_file(file_path)
+                    data.append(switch_data)
+                else:
+                    logging.debug(f"{filename} was not IOS XE. Discarding!")
             else:
-                print("No Valid Log Files")
+                logging.warning("No Valid Log Files")
+        logging.debug("Data Extracted Successfully!")
+        return data
     except Exception as e:
-        print(f"Error in process_directory: {str(e)}")
+        logging.error(f"Error in process_directory: {str(e)}")
+        return 500
+
 
 def main():
     try:
         # file_path = r"C:\Users\shivanarayan.v\Downloads\PROD28FLOORSW01_172.16.3.28 1.txt"
-        file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR135977300\PROD029FLOORSW01_172.16.3.29.txt"
-        print(process_file(file_path))
+        file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200\UOBAM-C9300-PLA-L20-DSW-01_10.52.254.5.txt"
+        pp.pprint(process_file(file_path))
     except Exception as e:
         print(f"Error in main: {str(e)}")
 

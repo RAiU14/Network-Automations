@@ -29,7 +29,7 @@ class Stack_Check:
 
     def uptime(self, data=None):
         target = data if data is not None else self.log_data
-        match = re.search(r"uptime \s+(.+)", target)
+        match = re.search(r"Switch uptime\s+:\s+(.+)", target)
         return match.group(1).strip() if match else None
 
     def stack_size(self, content):
