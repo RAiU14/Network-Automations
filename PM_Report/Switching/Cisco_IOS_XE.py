@@ -1,13 +1,13 @@
 import re
 import os
 import logging
+import datetime  # ← ADDED: Missing import
 import pprint as pp
-from IOS_XE_Stack_Switch import *
+from Switching import IOS_XE_Stack_Switch
 
 log_dir = os.path.join(os.path.dirname(__file__), "logs")
 os.makedirs(log_dir, exist_ok=True)
-logging.basicConfig(filename=os.path.join(log_dir,  f"{datetime.datetime.today().strftime('%Y-%m-%d')}.log"), level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-
+logging.basicConfig(filename=os.path.join(log_dir, f"{datetime.datetime.today().strftime('%Y-%m-%d')}.log"), level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def get_hostname(log_data):
     try:
@@ -87,8 +87,8 @@ def check_stack(log_data):
         if not next_start_end_point:
             return False
         else:
-            stack_switch_data = Stack_Check()
-            return stack_switch_data.parse_ios_xe_stack_switch(log_data)
+            stack_details = IOS_XE_Stack_Switch.parse_ios_xe_stack_switch(log_data)
+            return stack_details
     except Exception as e:
         return f"Error in check_stack: {str(e)}"
 
@@ -100,18 +100,8 @@ def get_memory_info(log_data):
             used = int(match.group(2))
             free = int(match.group(3))
             utilization = (used / total) * 100
-            return [
-                total,
-                used,
-                free,
-                f"{utilization:.2f}%"
-            ]
-        return [
-            "NA",
-            "NA",
-            "NA",
-            "NA"
-        ]
+            return [total, used, free, f"{utilization:.2f}%"]
+        return ["NA", "NA", "NA", "NA"]
     except Exception as e:
         return f"Error in get_memory_info: {str(e)}"
 
@@ -158,7 +148,6 @@ def get_fan_status(log_data):
                 fan_section = match.group(0)
                 fans = re.findall(r'\d+\s+\d+\s+(OK|[^O][^K])', fan_section)
                 status.append('OK' if all(fan == 'OK' for fan in fans) else 'Not OK')
-                # fan_status[f'Switch {i}'] = status
         return status
     except Exception as e:
         return f"Error in get_fan_status: {str(e)}"
@@ -193,7 +182,6 @@ def get_power_supply_status(log_data):
                 switch_block_end = sensor_list_starts[i+1]
 
             current_switch_data = log_data[switch_block_start:switch_block_end]
-
             switch_number = i + 1
             alarm_status = "OK"
 
@@ -241,7 +229,7 @@ def get_available_ports(log_data):
         if match:
             section = match.group(1)
             ports = {}
-            for line in section.strip().splitlines()[1:]:  # Skip the header line
+            for line in section.strip().splitlines()[1:]:
                 parts = line.split()
                 if 'notconnect' in parts and '1' in parts:
                     try:
@@ -263,8 +251,8 @@ def get_available_ports(log_data):
 
 def get_half_duplex_ports(log_data):
     try:
-        stack_switch = Stack_Check(log_data)
-        get_stack_size = stack_switch.stack_size(log_data)
+        current_stack_size = IOS_XE_Stack_Switch.stack_size(log_data)  # ← FIXED: Renamed variable
+        print("STACK SIZE:", current_stack_size)
         match = re.findall(r"^(\S+).*a-half.*$", log_data, re.IGNORECASE | re.MULTILINE)
         if match:
             switch_interfaces = {}
@@ -277,14 +265,13 @@ def get_half_duplex_ports(log_data):
             half_duplex_ports_per_switch = [[len(switch_interfaces.get(str(i), []))] for i in range(1, max_switch_number + 1)]
             return half_duplex_ports_per_switch
         else:
-            return ["NO"] * get_stack_size
+            return ["NO"] * current_stack_size  # ← FIXED: Use renamed variable
     except Exception as e:
-        return [[str(e)]] * get_stack_size
+        print(f"ERROR in HALF DUPLEX {e}")
 
 def get_interface_remark(log_data):
     try:
-        stack_switch = Stack_Check(log_data)
-        get_stack_size = stack_switch.stack_size(log_data)
+        current_stack_size = IOS_XE_Stack_Switch.stack_size(log_data)  # ← FIXED: Renamed variable
         match = re.findall(r"^(\S+).*a-half.*$", log_data, re.IGNORECASE | re.MULTILINE)
         if match:
             switch_interfaces = {}
@@ -298,9 +285,9 @@ def get_interface_remark(log_data):
             interface_remark = [sublist if sublist else ['N/A'] for sublist in interface_remark]
             return interface_remark
         else:
-            return ["N/A"] * get_stack_size
+            return ["N/A"] * current_stack_size  # ← FIXED: Use renamed variable
     except Exception as e:
-        return [[f"Error in get_interface_remark: {str(e)}"]] * get_stack_size
+        return [[f"Error in get_interface_remark: {str(e)}"]] * current_stack_size  # ← FIXED: Use renamed variable
 
 def get_nvram_config_update(log_data):
     try:
@@ -317,7 +304,6 @@ def get_critical_logs(log_data):
         match = re.search(r'(sh|show)\s+(log|logging)\s*-+\n(.*?)(?=\n-+\s*show|\Z)', log_data, re.DOTALL | re.IGNORECASE)
         if match:
             logging_section = match.group(1)
-            # Check for -0-, -1-, or -2-
             if any(f"-{i}-" in logging_section for i in range(3)):
                 return "YES"
             else:
@@ -347,6 +333,7 @@ def process_file(file_path):
             log_data = file.read()
         data = {}
         stack = check_stack(log_data)
+        print("STACK:", stack)
         if not stack:
             memory_info = get_memory_info(log_data)
             flash_info = get_flash_info(log_data)
@@ -355,47 +342,48 @@ def process_file(file_path):
             elif isinstance(flash_info, str):
                 flash_info = ["NA", "NA", "NA", "NA"]
             
+            # ... (rest of single switch processing remains the same)
             data = {
-                        "File name": [get_ip_address(file_path)[0]],
-                        "Host name": [get_hostname(log_data)],
-                        "Model number": [get_model_number(log_data)],
-                        "Serial number": [get_serial_number(log_data)],
-                        "Interface ip address": [get_ip_address(file_path)[1]],
-                        "Uptime": [get_uptime(log_data)],
-                        "Current s/w version": [get_current_sw_version(log_data)],
-                        "Last Reboot Reason": [get_last_reboot_reason(log_data)],
-                        "Any Debug?": [get_debug_status(log_data)],
-                        "CPU Utilization": [get_cpu_utilization(log_data)],
-                        "Total memory": [memory_info[0]],
-                        "Used memory": [memory_info[1]],
-                        "Free memory": [memory_info[2]],
-                        "Memory Utilization (%)": [memory_info[3]],
-                        "Total flash memory": [flash_info[0]],
-                        "Used flash memory": [flash_info[1]],
-                        "Free flash memory": [flash_info[2]],
-                        "Used Flash (%)": [f"{flash_info[3]:.2f}%" if isinstance(flash_info[3], (int, float)) else flash_info[3]],
-                        "Fan status": [get_fan_status(log_data)],
-                        "Temperature status": [get_temperature_status(log_data)],
-                        "PowerSupply status": [get_power_supply_status(log_data)],
-                        "Available Free Ports": [get_available_ports(log_data)],
-                        "Any Half Duplex": [get_half_duplex_ports(log_data)],
-                        "Interface/Module Remark": [get_interface_remark(log_data)],
-                        "Config Status": [get_nvram_config_update(log_data)[0]],
-                        "Config Save Date": [get_nvram_config_update(log_data)[1]],
-                        "Critical logs": [get_critical_logs(log_data)],
-                        # Add default values for the remaining columns
-                        "Current SW EOS": ["NA"],
-                        "Suggested s/w ver": ["NA"],
-                        "s/w release date": ["NA"],
-                        "Latest S/W version": ["NA"],
-                        "Production s/w is deffered or not?": ["NA"],
-                        "End-of-Sale Date: HW": ["NA"],
-                        "Last Date of Support: HW": ["NA"],
-                        "End of Routine Failure Analysis Date: HW": ["NA"],
-                        "End of Vulnerability/Security Support: HW": ["NA"],
-                        "End of SW Maintenance Releases Date: HW": ["NA"],
-                        "Remark": ["NA"]
-                    }
+                "File name": [get_ip_address(file_path)[0]],
+                "Host name": [get_hostname(log_data)],
+                "Model number": [get_model_number(log_data)],
+                "Serial number": [get_serial_number(log_data)],
+                "Interface ip address": [get_ip_address(file_path)[1]],
+                "Uptime": [get_uptime(log_data)],
+                "Current s/w version": [get_current_sw_version(log_data)],
+                "Last Reboot Reason": [get_last_reboot_reason(log_data)],
+                "Any Debug?": [get_debug_status(log_data)],
+                "CPU Utilization": [get_cpu_utilization(log_data)],
+                "Total memory": [memory_info[0]],
+                "Used memory": [memory_info[1]],
+                "Free memory": [memory_info[2]],
+                "Memory Utilization (%)": [memory_info[3]],
+                "Total flash memory": [flash_info[0]],
+                "Used flash memory": [flash_info[1]],
+                "Free flash memory": [flash_info[2]],
+                "Used Flash (%)": [f"{flash_info[3]:.2f}%" if isinstance(flash_info[3], (int, float)) else flash_info[3]],
+                "Fan status": [get_fan_status(log_data)],
+                "Temperature status": [get_temperature_status(log_data)],
+                "PowerSupply status": [get_power_supply_status(log_data)],
+                "Available Free Ports": [get_available_ports(log_data)],
+                "Any Half Duplex": [get_half_duplex_ports(log_data)],
+                "Interface/Module Remark": [get_interface_remark(log_data)],
+                "Config Status": [get_nvram_config_update(log_data)[0]],
+                "Config Save Date": [get_nvram_config_update(log_data)[1]],
+                "Critical logs": [get_critical_logs(log_data)],
+                # Add default values for the remaining columns
+                "Current SW EOS": ["NA"],
+                "Suggested s/w ver": ["NA"],
+                "s/w release date": ["NA"],
+                "Latest S/W version": ["NA"],
+                "Production s/w is deffered or not?": ["NA"],
+                "End-of-Sale Date: HW": ["NA"],
+                "Last Date of Support: HW": ["NA"],
+                "End of Routine Failure Analysis Date: HW": ["NA"],
+                "End of Vulnerability/Security Support: HW": ["NA"],
+                "End of SW Maintenance Releases Date: HW": ["NA"],
+                "Remark": ["NA"]
+            }
         else:
             data = {}
             file_name, hostname, model_number, serial_number, ip_address, uptime = [], [], [], [], [], []
@@ -403,11 +391,12 @@ def process_file(file_path):
             total_memory, used_memory, free_memory, memory_utilization = [], [], [], []
             total_flash, used_flash, free_flash, flash_utilization = [], [], [], []
             avail_free, duplex, interface_remark, config_status, config_date = [], [], [], [], []
-            stack_switch = Stack_Check()
-            stack_size = stack_switch.stack_size(log_data)
-            stack_switch_data = stack_switch.parse_ios_xe_stack_switch(log_data)
+            
+            current_stack_size = IOS_XE_Stack_Switch.stack_size(log_data)  # ← FIXED: Renamed variable to avoid shadowing
+            stack_switch_data = IOS_XE_Stack_Switch.parse_ios_xe_stack_switch(log_data)
             flash_memory_details = get_flash_info(log_data)
-            for item in range(stack_size):
+            
+            for item in range(current_stack_size):  # ← FIXED: Use renamed variable
                 if item == 0:
                     file_name.append(get_ip_address(file_path)[0])
                     model_number.append(get_model_number(log_data))
@@ -460,7 +449,7 @@ def process_file(file_path):
             data["Uptime"] = uptime
             data["Current s/w version"] = current_sw
             data["Last Reboot Reason"] = last_reboot
-            data["Any Debug?"] = [get_debug_status(log_data) for _ in range(stack_size)]
+            data["Any Debug?"] = [get_debug_status(log_data) for _ in range(current_stack_size)]  # ← FIXED
             data["CPU Utilization"] = cpu
             data["Total memory"] = total_memory
             data["Used memory"] = used_memory
@@ -479,17 +468,17 @@ def process_file(file_path):
             data["Interface/Module Remark"] = interface_remark
             data["Config Status"] = config_status
             data["Config Save Date"] = config_date
-            data["Current SW EOS"] = ["Yet to check"] * stack_size
-            data["Suggested s/w ver"] = ["Yet to check"] * stack_size
-            data["s/w release date"] = ["Yet to check"] * stack_size
-            data["Latest S/W version"] = ["Yet to check"] * stack_size
-            data["Production s/w is deffered or not?"] = ["Yet to check"] * stack_size
-            data["End-of-Sale Date: HW"] = ["Yet to check"] * stack_size
-            data["Last Date of Support: HW"] = ["Yet to check"] * stack_size
-            data["End of Routine Failure Analysis Date: HW"] = ["Yet to check"] * stack_size
-            data["End of Vulnerability/Security Support: HW"] = ["Yet to check"] * stack_size
-            data["End of SW Maintenance Releases Date: HW"] = ["Yet to check"] * stack_size
-            data["Remark"] = ["Yet to check"] * stack_size
+            data["Current SW EOS"] = ["Yet to check"] * current_stack_size  # ← FIXED
+            data["Suggested s/w ver"] = ["Yet to check"] * current_stack_size  # ← FIXED
+            data["s/w release date"] = ["Yet to check"] * current_stack_size  # ← FIXED
+            data["Latest S/W version"] = ["Yet to check"] * current_stack_size  # ← FIXED
+            data["Production s/w is deffered or not?"] = ["Yet to check"] * current_stack_size  # ← FIXED
+            data["End-of-Sale Date: HW"] = ["Yet to check"] * current_stack_size  # ← FIXED
+            data["Last Date of Support: HW"] = ["Yet to check"] * current_stack_size  # ← FIXED
+            data["End of Routine Failure Analysis Date: HW"] = ["Yet to check"] * current_stack_size  # ← FIXED
+            data["End of Vulnerability/Security Support: HW"] = ["Yet to check"] * current_stack_size  # ← FIXED
+            data["End of SW Maintenance Releases Date: HW"] = ["Yet to check"] * current_stack_size  # ← FIXED
+            data["Remark"] = ["Yet to check"] * current_stack_size  # ← FIXED
         return data
     except Exception as e:
         print(f"Error in process_file: {str(e)}")
@@ -518,19 +507,17 @@ def process_directory(directory_path):
             else:
                 logging.warning("No Valid Log Files")
         logging.debug("Data Extracted Successfully!")
-        return data
+        return data 
     except Exception as e:
         logging.error(f"Error in process_directory: {str(e)}")
         return 500
 
-
 def main():
     try:
-        # file_path = r"C:\Users\shivanarayan.v\Downloads\PROD28FLOORSW01_172.16.3.28 1.txt"
         file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200\UOBAM-C9300-PLA-L20-DSW-01_10.52.254.5.txt"
         pp.pprint(process_file(file_path))
     except Exception as e:
         print(f"Error in main: {str(e)}")
 
 if __name__ == "__main__":
-    main()
+    print(process_directory(r'C:\Users\shivanarayan.v\OneDrive - NTT Ltd\Documents\Github Stuffs\WIP\Network-Automations\Database\Uploads\SVR137572722\SVR137572722_extracted'))
