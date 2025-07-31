@@ -2,6 +2,10 @@ import json
 import logging
 import os
 import datetime
+from Database.Integration import *
+from Database import *
+
+path = r"C:\Users\abhi.bs\OneDrive - NTT Ltd\Desktop\(!)\Repo\Network-Automations\Database\Uploads\SVR137436530\metadata.json"
 
 log_dir = os.path.join(os.path.dirname(__file__), "logs")
 os.makedirs(log_dir, exist_ok=True)
@@ -24,7 +28,9 @@ class Cisco_EOX:
                 return entry
             else:
                 logging.debug(f"No entry for PID={self.pid} in local DB.")
-                # WIP
+                model_number = self.pid
+                # technology = metadata(ticket_number)
+                # eox_online_scrapping([model_number], technology) #WIP
                 return False
         except (IOError, json.JSONDecodeError) as e:
             logging.error(f"Error reading local DB for PID={self.pid}: {e}")

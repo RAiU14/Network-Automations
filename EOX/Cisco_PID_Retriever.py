@@ -90,7 +90,10 @@ def find_device_series_link(pid: str, tech: str):
 def eox_retreival(pid, link):
     try:
         eox_link = eox_details(link)
-        if eox_link[0] == True:
+        if not eox_link:
+            eox_checking = eox_check(link)
+            return eox_checking[0]
+        elif eox_link[0] == True:
             eox_listing_links = eox_details(eox_link[1])
             if len(eox_listing_links) == 1:
                 eox = eox_scrapping(eox_listing_links[list(eox_listing_links.keys())[0]])
@@ -114,4 +117,3 @@ def eox_retreival(pid, link):
     except Exception as e:
         logging.error(f"An Error Occurred while retreving EOX for {pid}!\n{e}")
         return None
-    
