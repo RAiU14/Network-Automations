@@ -5,7 +5,7 @@ import logging
 import datetime
 
 # Setup logging
-log_dir = os.path.join(os.path.dirname(__file__), "logs")
+log_dir = os.path.join(os.path.dirname(__file__), "import_two_logs")
 os.makedirs(log_dir, exist_ok=True)
 logging.basicConfig(
     filename=os.path.join(log_dir, f"{datetime.datetime.today().strftime('%Y-%m-%d')}.log"),
@@ -77,7 +77,7 @@ for module_name in modules_to_import:
             
     except Exception as e:
         error_msg = f"{module_name} unexpected error during import: {e}"
-        logging.error(f"❌ {error_msg}")
+        logging.error(f" {error_msg}")
         logging.exception(f"Full traceback for {module_name} import error:")
         failed_imports += 1
 

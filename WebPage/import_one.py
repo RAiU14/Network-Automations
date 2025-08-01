@@ -5,7 +5,7 @@ import logging
 import datetime
 
 # Setup logging
-log_dir = os.path.join(os.path.dirname(__file__), "import_one")
+log_dir = os.path.join(os.path.dirname(__file__), "import_one_log")
 os.makedirs(log_dir, exist_ok=True)
 logging.basicConfig(
     filename=os.path.join(log_dir, f"{datetime.datetime.today().strftime('%Y-%m-%d')}.log"),
@@ -48,7 +48,7 @@ for module_name, description in modules_to_import.items():
 
 # Check critical modules
 if 'Cisco_EOX' not in imported_modules:
-    logging.error("❌ CRITICAL: Cisco_EOX module failed to import - EOX functionality will be disabled")
+    logging.error(" CRITICAL: Cisco_EOX module failed to import - EOX functionality will be disabled")
 
 # Export configuration
 __all__ = list(imported_modules.keys())

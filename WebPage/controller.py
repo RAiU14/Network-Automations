@@ -73,7 +73,7 @@ class UploadController:
         
         logging.info("Module availability check:")
         for module, available in modules.items():
-            status = "✅ Available" if available else "❌ Not available"
+            status = "✅ Available" if available else " Not available"
             logging.info(f"  {module}: {status}")
         
         return modules
