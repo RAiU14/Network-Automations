@@ -6,6 +6,7 @@ import sys
 import time
 from flask import Flask, render_template, request, redirect, url_for, flash
 
+
 # Add parent directory to path for imports
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent_dir)
@@ -203,3 +204,10 @@ if __name__ == '__main__':
         app.run(host='0.0.0.0', port=5000, debug=True)
     except Exception as e:
         print(f"❌ Failed to start Flask app: {e}")
+
+# # Example usage
+# if __name__ == "__main__":
+#     excel_file_path = r"C:\Users\abhi.bs\OneDrive - NTT Ltd\Desktop\Book1.xlsx"
+#     db_path = r"C:\\Users\\abhi.bs\\OneDrive - NTT Ltd\\Desktop\\(!)\\Repo\\Network-Automations\\Database\\JSON_Files\\eox_pid.json"
+#     data = eox_pull(excel_file_path, db_path)
+#     print(data)
