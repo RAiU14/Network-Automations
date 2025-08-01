@@ -5,13 +5,20 @@ import json
 import socket
 import logging
 import datetime
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, abort
+from werkzeug.utils import secure_filename
 
-# Import controller
-from controller import get_controller
+# Import controller functions
+from controller import (
+    process_upload, 
+    check_module_availability, 
+    validate_ticket_number, 
+    allowed_file,
+    initialize_controller
+)
 
 # Setup logging
-log_dir = os.path.join(os.path.dirname(__file__), "app_run")
+log_dir = os.path.join(os.path.dirname(__file__), "logs")
 os.makedirs(log_dir, exist_ok=True)
 logging.basicConfig(
     filename=os.path.join(log_dir, f"{datetime.datetime.today().strftime('%Y-%m-%d')}.log"),
@@ -41,7 +48,7 @@ logging.debug(f"Flask app config: UPLOAD_FOLDER={app.config['UPLOAD_FOLDER']}")
 
 # Initialize controller
 try:
-    controller = get_controller(UPLOAD_FOLDER, ALLOWED_EXTENSIONS)
+    initialize_controller(UPLOAD_FOLDER, ALLOWED_EXTENSIONS)
     logging.info("✅ Controller initialized successfully")
 except Exception as e:
     logging.critical(f"❌ Failed to initialize controller: {str(e)}")
@@ -73,7 +80,7 @@ def index():
 
 @app.route('/upload', methods=['POST'])
 def upload():
-    """Handle file upload - delegates to controller"""
+    """Handle file upload - delegates to controller functions"""
     logging.info("📤 Upload route accessed")
     
     try:
@@ -98,9 +105,9 @@ def upload():
         else:
             logging.warning("  No file provided in request")
         
-        # Delegate to controller
-        logging.info("🔄 Delegating to controller for processing...")
-        result = controller.process_upload(form_data, file_obj)
+        # Use controller function directly
+        logging.info("🔄 Processing upload with controller functions...")
+        result = process_upload(form_data, file_obj, UPLOAD_FOLDER, ALLOWED_EXTENSIONS)
         
         # Log controller result
         logging.info(f"Controller processing result: {result['success']}")
@@ -115,7 +122,6 @@ def upload():
             flash(result['message'], 'success')
         else:
             flash(result['message'], 'error')
-            # Log flash message for debugging
             logging.debug(f"Flash message set: {result['message']}")
         
         redirect_target = result.get('redirect_to', 'index')
@@ -135,9 +141,9 @@ def debug():
     logging.info("🔍 Debug route accessed")
     
     try:
-        # Check module availability
+        # Check module availability using function
         logging.debug("Checking module availability...")
-        modules = controller.check_module_availability()
+        modules = check_module_availability()
         
         # Gather debug information
         debug_info = {
@@ -147,7 +153,7 @@ def debug():
             'upload_folder_exists': os.path.exists(UPLOAD_FOLDER),
             'module_availability': modules,
             'current_directory': os.getcwd(),
-            'python_path_count': len(sys.path) if 'sys' in globals() else 'sys not imported',
+            'python_path_count': len(sys.path),
             'flask_config': dict(app.config),
             'request_info': {
                 'remote_addr': request.remote_addr if request else 'No request context',
@@ -174,6 +180,100 @@ def debug():
         logging.error(f"❌ {error_msg}")
         logging.exception("Full traceback for debug route error:")
         return f"<pre>Debug Error: {error_msg}</pre>"
+
+# New Feature to Download Starts from here
+@app.route('/download/<ticket_number>')
+def download_report(ticket_number):
+    """Download completed report for a ticket"""
+    logging.info(f"📥 Download request for ticket: {ticket_number}")
+    
+    try:
+        # Validate ticket format using function
+        if not validate_ticket_number(ticket_number):
+            logging.warning(f"Invalid ticket format for download: {ticket_number}")
+            flash('Invalid ticket number format', 'error')
+            return redirect(url_for('index'))
+        
+        # Construct file path
+        ticket_folder = os.path.join(UPLOAD_FOLDER, ticket_number)
+        excel_file = os.path.join(ticket_folder, f"{ticket_number}_analysis.xlsx")
+        
+        logging.debug(f"Looking for file: {excel_file}")
+        
+        # Check if file exists
+        if not os.path.exists(excel_file):
+            logging.warning(f"Report file not found: {excel_file}")
+            flash(f'Report not found for ticket {ticket_number}', 'error')
+            return redirect(url_for('index'))
+        
+        # Check file size and log
+        file_size = os.path.getsize(excel_file)
+        logging.info(f"✅ Serving download: {excel_file} (Size: {file_size} bytes)")
+        
+        # Send file
+        return send_file(
+            excel_file,
+            as_attachment=True,
+            download_name=f"{ticket_number}_analysis.xlsx",
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        
+    except Exception as e:
+        error_msg = f"Error downloading report for {ticket_number}: {str(e)}"
+        logging.error(f"❌ {error_msg}")
+        logging.exception("Full traceback for download error:")
+        flash('Error occurred while downloading the report', 'error')
+        return redirect(url_for('index'))
+
+@app.route('/check_status/<ticket_number>')
+def check_status(ticket_number):
+    """Check processing status and file availability for a ticket"""
+    logging.info(f"🔍 Status check for ticket: {ticket_number}")
+    
+    try:
+        if not validate_ticket_number(ticket_number):
+            return {'status': 'error', 'message': 'Invalid ticket format'}
+        
+        ticket_folder = os.path.join(UPLOAD_FOLDER, ticket_number)
+        metadata_file = os.path.join(ticket_folder, 'metadata.json')
+        excel_file = os.path.join(ticket_folder, f"{ticket_number}_analysis.xlsx")
+        
+        status_info = {
+            'ticket_exists': os.path.exists(ticket_folder),
+            'metadata_exists': os.path.exists(metadata_file),
+            'excel_exists': os.path.exists(excel_file),
+            'download_ready': False
+        }
+        
+        if status_info['metadata_exists']:
+            try:
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+                    status_info['processing_status'] = metadata.get('processing_status', 'unknown')
+                    status_info['excel_export'] = metadata.get('excel_export', {})
+                    status_info['download_ready'] = (
+                        status_info['excel_exists'] and 
+                        metadata.get('excel_export', {}).get('status') == 'completed'
+                    )
+            except Exception as e:
+                logging.error(f"Error reading metadata for {ticket_number}: {str(e)}")
+                status_info['metadata_error'] = str(e)
+        
+        logging.debug(f"Status for {ticket_number}: {status_info}")
+        return status_info
+        
+    except Exception as e:
+        logging.error(f"Error checking status for {ticket_number}: {str(e)}")
+        return {'status': 'error', 'message': str(e)}
+
+@app.route('/reset')
+def reset_form():
+    """Reset form and clear any flash messages"""
+    logging.info("🔄 Form reset requested")
+    # Clear any existing flash messages by redirecting to index
+    return redirect(url_for('index'))
+
+# New Feature Update Ends here
 
 @app.errorhandler(404)
 def not_found_error(error):
@@ -207,9 +307,9 @@ if __name__ == '__main__':
         print(f"📂 Upload folder: {UPLOAD_FOLDER}")
         print(f"🔗 Upload folder exists: {os.path.exists(UPLOAD_FOLDER)}")
         
-        # Test module availability
+        # Test module availability using function
         logging.info("🧪 Testing module availability...")
-        modules = controller.check_module_availability()
+        modules = check_module_availability()
         available_count = sum(modules.values())
         total_count = len(modules)
         
@@ -235,6 +335,7 @@ if __name__ == '__main__':
         logging.info("🚀 Starting Flask development server...")
         print(f"🚀 Flask app running at: http://{local_ip}:5000")
         print(f"🔍 Debug info available at: http://{local_ip}:5000/debug")
+        print(f"📥 Download reports at: http://{local_ip}:5000/download/<ticket_number>")
         
         logging.info(f"Flask server starting on {local_ip}:5000")
         logging.info("Debug mode: True")
