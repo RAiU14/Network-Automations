@@ -18,7 +18,11 @@ from controller import (
 )
 
 # Setup logging
+<<<<<<< HEAD
 log_dir = os.path.join(os.path.dirname(__file__), "logs")
+=======
+log_dir = os.path.join(os.path.dirname(__file__), "app_run_logs")
+>>>>>>> EOX
 os.makedirs(log_dir, exist_ok=True)
 logging.basicConfig(
     filename=os.path.join(log_dir, f"{datetime.datetime.today().strftime('%Y-%m-%d')}.log"),
@@ -51,7 +55,7 @@ try:
     initialize_controller(UPLOAD_FOLDER, ALLOWED_EXTENSIONS)
     logging.info("✅ Controller initialized successfully")
 except Exception as e:
-    logging.critical(f"❌ Failed to initialize controller: {str(e)}")
+    logging.critical(f" Failed to initialize controller: {str(e)}")
     raise
 
 @app.route('/')
@@ -73,7 +77,7 @@ def index():
         return render_template('upload.html', technologies=technologies)
         
     except Exception as e:
-        logging.error(f"❌ Error in index route: {str(e)}")
+        logging.error(f" Error in index route: {str(e)}")
         logging.exception("Full traceback for index route error:")
         flash('An error occurred while loading the page', 'error')
         return render_template('upload.html', technologies=['Wireless', 'Switches', 'Security', 'Others'])
@@ -130,7 +134,7 @@ def upload():
         
     except Exception as e:
         error_msg = f"Unexpected error in upload route: {str(e)}"
-        logging.error(f"❌ {error_msg}")
+        logging.error(f" {error_msg}")
         logging.exception("Full traceback for upload route error:")
         flash('An unexpected error occurred during upload processing', 'error')
         return redirect(url_for('index'))
@@ -177,7 +181,7 @@ def debug():
         
     except Exception as e:
         error_msg = f"Error in debug route: {str(e)}"
-        logging.error(f"❌ {error_msg}")
+        logging.error(f" {error_msg}")
         logging.exception("Full traceback for debug route error:")
         return f"<pre>Debug Error: {error_msg}</pre>"
 
@@ -348,9 +352,9 @@ if __name__ == '__main__':
         
     except Exception as e:
         error_msg = f"Failed to start Flask app: {str(e)}"
-        logging.critical(f"❌ {error_msg}")
+        logging.critical(f" {error_msg}")
         logging.exception("Full traceback for Flask startup error:")
-        print(f"❌ {error_msg}")
+        print(f" {error_msg}")
         raise
         
     finally:

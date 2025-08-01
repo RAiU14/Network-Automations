@@ -48,6 +48,7 @@ def validate_ticket_number(ticket: str) -> bool:
     else:
         logging.warning(f"Invalid ticket number format: {ticket}")
     
+<<<<<<< HEAD
     return is_valid
 
 def check_module_availability() -> Dict[str, bool]:
@@ -58,6 +59,23 @@ def check_module_availability() -> Dict[str, bool]:
         'Cisco_EOX': 'Cisco_EOX' in globals(),
         'extract_zip_flatten_structure': 'extract_zip_flatten_structure' in globals()
     }
+=======
+    def check_module_availability(self) -> Dict[str, bool]:
+        """Check which modules are available for processing"""
+        modules = {
+            'Cisco_IOS_XE': 'Cisco_IOS_XE' in globals(),
+            'Data_to_Excel': 'Data_to_Excel' in globals(),
+            'Cisco_EOX': 'Cisco_EOX' in globals(),
+            'extract_zip_flatten_structure': 'extract_zip_flatten_structure' in globals()
+        }
+        
+        logging.info("Module availability check:")
+        for module, available in modules.items():
+            status = "✅ Available" if available else " Not available"
+            logging.info(f"  {module}: {status}")
+        
+        return modules
+>>>>>>> EOX
     
     logging.info("Module availability check:")
     for module, available in modules.items():
