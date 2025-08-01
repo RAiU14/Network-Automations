@@ -3,7 +3,6 @@ import logging
 import os
 import datetime
 import pandas as pd
-from Database.Integration import *
 from EOX.Cisco_EOX_Scrapper import *
 from EOX.Cisco_PID_Retriever import *
 
@@ -86,21 +85,23 @@ def new_json(new_data_dict, db_path):
 
 def unique_pid(excel_file_path):
     unextracted = pd.read_excel(excel_file_path, engine="openpyxl")
-    column_c_values = unextracted.iloc[1:, 2]
+    column_c_values = unextracted.iloc[0:, 2]
     column_c_values = column_c_values.dropna().astype(str).str.strip()
     unique_values = column_c_values.unique()
     return unique_values.tolist()
 
-def eox_pull(excel_file_path, db_path):
-    pid_list = unique_pid(excel_file_path)
+def eox_pull(excel_file_path, db_path=None):
+    # pid_list = unique_pid(excel_file_path)
+    pid_list = ["C1000-16FP-2G-L"]
     results = {}
     for pid in pid_list:
         results[pid] = get_eox_data(pid, db_path)
-    print(results)
+    return results
 
 # Example usage
 if __name__ == "__main__":
     excel_file_path = r"C:\Users\abhi.bs\OneDrive - NTT Ltd\Desktop\Book1.xlsx"
     db_path = r"C:\\Users\\abhi.bs\\OneDrive - NTT Ltd\\Desktop\\(!)\\Repo\\Network-Automations\\Database\\JSON_Files\\eox_pid.json"
     final_result = eox_pull(excel_file_path, db_path)
+    print(final_result)
     json.dumps(final_result, indent=4)
