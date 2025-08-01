@@ -10,24 +10,22 @@ from flask import Flask, render_template, request, redirect, url_for, flash
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent_dir)
 
-# Add Switching directory to path so we can import modules directly
+# Add Switching directory to path
 switching_dir = os.path.join(parent_dir, 'Switching')
 sys.path.insert(0, switching_dir)
 
-# Now import modules directly (not as packages)
-try:
-    from file_processing import extract_zip_flatten_structure
-    import Cisco_IOS_XE  # Direct import, not from Switching
-    import Data_to_Excel  # Direct import, not from Switching
-    print("✅ All modules imported successfully")
-    print(f"🔧 Available Cisco_IOS_XE functions: {[attr for attr in dir(Cisco_IOS_XE) if not attr.startswith('_')]}")
-except ImportError as e:
-    print(f"❌ Import error: {e}")
-    print(f"Parent directory: {parent_dir}")
-    print(f"Switching directory: {switching_dir}")
-    print(f"Files in parent: {os.listdir(parent_dir)}")
-    print(f"Files in switching: {os.listdir(switching_dir) if os.path.exists(switching_dir) else 'Directory not found'}")
-    sys.exit(1)
+# Add EOX directory to path
+eox_dir = os.path.join(parent_dir, 'EOX')
+sys.path.insert(0, eox_dir)
+
+# Simple direct imports (no package notation needed)
+from file_processing import extract_zip_flatten_structure
+import Cisco_IOS_XE
+import Data_to_Excel
+# import Cisco_EOX  # ← Direct import, not from EOX.Cisco_EOX
+
+print("✅ All modules imported successfully")
+
 
 # Rest of your Flask app configuration
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -137,6 +135,14 @@ def upload():
                         Data_to_Excel.append_to_excel(ticket, data, excel_path)
                         metadata['excel_export'] = {'status': 'completed', 'file_path': excel_path}
                         print(f"✅ Excel export completed: {excel_path}")
+                        copy_result = Data_to_Excel.process_eox_analysis(excel_path)
+                        metadata['copy_creation'] = copy_result
+                        
+                        if copy_result['status'] == 'success':
+                            print("Print", excel_path, technology)
+                            Cisco_EOX.eox_pull(excel_file_path=excel_path)
+                            pass
+                        
                     except Exception as excel_error:
                         print(f"❌ Excel processing failed: {excel_error}")
                         metadata['excel_export'] = {'status': 'failed', 'error': str(excel_error)}
