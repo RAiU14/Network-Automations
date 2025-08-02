@@ -9,24 +9,12 @@ import re
 # Note: This program works as long as the product page from Cisco is not changed~~ 
 
 # Used for logging. 
-log_dir = os.path.join(os.path.dirname(__file__), "logs")
+log_dir = os.path.join(os.path.dirname(__file__), "EOX")
 os.makedirs(log_dir, exist_ok=True)
 logging.basicConfig(filename=os.path.join(log_dir,  f"{datetime.datetime.today().strftime('%Y-%m-%d')}.log"), level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 cisco_url = "https://www.cisco.com"
-
-# This function returns all categories from the product page.
-def category():
-    logging.info("Starting category search process.")
-    tech = {}
-    for link in bs4.BeautifulSoup(requests.get(f"{cisco_url}/c/en/us/support/all-products.html").text, 'lxml').find("h3", string="All Product and Technology Categories").find_next("table").find_all("a"):
-        name = link.text.strip()
-        links = link.get('href')
-        if name and links:
-            tech[name] = links
-    logging.debug("Category Search Completed.")
-    return tech
 
 # This function is used to check the links if permissible and if any necessary changes are required. 
 def link_check(link: str) -> str:
@@ -41,8 +29,20 @@ def link_check(link: str) -> str:
             logging.warning(f"Link {link} is invalid, hence not passed.")
     return new_link
 
+# The flow is linear and similar as to how you open the device details from Cisco Support Page
+# This function returns all the available categories from the product page.
+def category():
+    logging.info("Starting category search process.")
+    tech = {}
+    for link in bs4.BeautifulSoup(requests.get(f"{cisco_url}/c/en/us/support/all-products.html").text, 'lxml').find("h3", string="All Product and Technology Categories").find_next("table").find_all("a"):
+        name = link.text.strip()
+        links = link.get('href')
+        if name and links:
+            tech[name] = links
+    logging.debug("Category Search Completed.")
+    return tech
 
-# This function is used to obtain device series related links from the category.
+# This function is used to open the speific category and obtain device series links for the selected category.
 def open_cat(link: str) -> list[dict[str, dict[str, str]]]:
     logging.info(f"Starting Device Gathering Process for category for URL: {cisco_url}{link}.")
     try:
@@ -175,8 +175,7 @@ def open_cat(link: str) -> list[dict[str, dict[str, str]]]:
         logging.error(f"An Error Occurred for opening Category URL: {cisco_url}{link}!\n{e}")
         return None
 
-
-# Checking if EOX is available for selective URL pages.
+# Checking if EOX is available for selective device in the Product Pages.
 def eox_check(link: str) -> list[bool, dict[str, str]]:
     logging.info(f"Starting EOX Redirection Link retreival process for URL: {cisco_url}{link}")
     try:
@@ -292,10 +291,7 @@ def eox_check(link: str) -> list[bool, dict[str, str]]:
         logging.error(f"An Error Occurred for while retreiving EOX redirection Links!\n{e}")
         return None 
 
-# Known Failure for Device: Cisco Nexus 1000V Switch for VMware vSphere
-# For some reason, this is the only page which is different in entire Cisco Domain. 
-
-# Obtaining a EOX Links
+# Obtaining a EOX Links from redirect page.
 def eox_details(link: str):
     logging.info("Starting EOX Link retreival process.")
     urls = {}
@@ -316,7 +312,6 @@ def eox_details(link: str):
     except Exception as e:
         logging.error(f"An Error Occurred for while retreiving EOX Link!\n{e}")
         return None
-
 
 # Obtaining EOX Details and Devices listed for EOX
 def eox_scrapping(link: str) -> list[dict[str, str], list[str]]:
@@ -350,3 +345,98 @@ def eox_scrapping(link: str) -> list[dict[str, str], list[str]]:
     except Exception as e:
         logging.error(f"An Error Occurred for while retreiving EOX data!\n{e}")
         return None
+
+
+# Below functions are used to obtain EOX of PIDs
+# To get a possible series from PID
+def get_possible_series(pid: str) -> list:
+    try:
+        numbers = re.search(r'(\d+)', pid)  # Getting only digits
+        if not numbers:
+            logging.warning(f"No digits in PID '{pid}'")
+            return [pid]
+        num = int(numbers.group(1))
+        candidates = []
+        candidates.append(str(num))  # full number first
+        if num >= 100:
+            candidates.append(str((num // 100) * 100))  # rounded to nearest hundred
+        if num >= 1000:
+            candidates.append(str((num // 1000) * 1000))  # rounded to nearest thousand
+
+        seen = set()
+        unique_candidates = []
+        seen = set()
+        for c in candidates:
+            if c not in seen:
+                seen.add(c)
+                unique_candidates.append(c)
+        return unique_candidates  
+    except Exception as e:
+        logging.error(f"An Error Occurred while figuring out the possibile device series for {pid}!\n{e}")
+        return None
+
+# Below method is used to search for the PID online. 
+# To compare it with the device list from the device category link. 
+def find_device_series_link(pid: str, tech: str):
+    try:
+        data = {}
+        available_category = category()
+        # Tech has to be the same STR available in category().keys()
+        tech_link = available_category[tech]
+        all_devices = open_cat(tech_link)
+        series_candidates = get_possible_series(pid)
+        logging.debug(f"Series candidates for '{pid}': {series_candidates}")
+
+        for cand in series_candidates:
+            for tech_block in all_devices:
+                for devices in tech_block.values():
+                    for device_name, url in devices.items():
+                        if cand in device_name:
+                            logging.info(f"Matched '{cand}' in '{device_name}'")
+                            data[device_name] = url
+        if data:
+            clean_pid = pid.replace("-", "").upper()
+            logging.debug(f"Cleaned the PID for matching: {pid} is now {clean_pid}")
+            logging.debug(f"Available PIDs: {list(data.keys())}")
+            
+            # Checking for exact match first
+            if pid in data:
+                logging.debug(f"Exact match found for PID '{pid}': {data[pid]}")
+                return data[pid]
+
+            logging.info("Starting Best Match Logic")
+            best_match = max(
+                data.keys(), 
+                key=lambda k: len(k.replace('-', '').replace(' ', '').upper()) if k.replace('-', '').replace(' ', '').upper() in clean_pid else 0, 
+                default=None
+            )
+            
+            if best_match:
+                logging.debug(f"Closest best match found for PID '{pid}': {data[best_match]}")
+                return data[best_match]
+            else:
+                logging.debug(f"No good match, returning first available: {list(data.values())[0]}")
+                return list(data.values())[0]
+
+        else:
+            logging.info(f"No match found for PID '{pid}'")
+            return False
+    except Exception as e:
+        logging.error(f"An Error Occurred while retreving link for {pid}!\n{e}")
+        return None  
+    
+# Function to check if the PID is EOX in the PID Table for the series. 
+# Expected input is the PID and the link of the EOX page. 
+def pid_eox_check(pid: str, link: str):
+    try:
+        logging.debug(f"Starting PID_EOX_CHECK for {pid} using link: {link}")
+        eox_details = eox_scrapping(link)
+        if pid in eox_details[1]:
+            logging.info(f"{pid} found in {link}. EOX retrieved!")
+            return [True, eox_details[0]]
+        else:
+            logging.info(f"{pid} not found in {link}. No EOX Available for device!")
+            return [False, "Check online"]
+    except Exception as e:
+        logging.error(f"Unknown Error occurred during PID_EOX_CHECK for {pid}: {e}\nLink Used: {link}")
+        
