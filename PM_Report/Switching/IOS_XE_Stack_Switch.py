@@ -132,7 +132,7 @@ def parse_ios_xe_stack_switch(content):
                         if get_last_reboot_reason(item):
                             data[f'stack switch {switch_number} Last Reboot'] = get_last_reboot_reason(item)
                         else: 
-                            data[f'stack switch {switch_number} Last Reboot'] = "N/A"
+                            data[f'stack switch {switch_number} Last Reboot'] = "Not available"
                         switch_number += 1
             return data
         else:

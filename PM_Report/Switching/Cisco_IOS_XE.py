@@ -3,7 +3,8 @@ import os
 import logging
 import datetime  # ← ADDED: Missing import
 import pprint as pp
-from . import IOS_XE_Stack_Switch
+# from . 
+import IOS_XE_Stack_Switch
     
 # Static strings
 NA = "Not available"
@@ -193,17 +194,41 @@ def get_flash_info(log_data):
 def get_fan_status(log_data):
     try:
         logging.info("Starting fan status extraction.")
-        switches = log_data.split("Sensor List: Environmental Monitoring")[1:]
-        if not switches:
-            logging.debug("No fan status information found in log data.")
-            return ["Not available"]
+        version = get_current_sw_version(log_data)
         status = []
-        for i, switch in enumerate(switches, start=1):
-            match = re.search(r'Switch FAN Speed State Airflow direction.*?(?=SW  PID)', switch, re.DOTALL)
-            if match:
-                fan_section = match.group(0)
-                fans = re.findall(r'\d+\s+\d+\s+(OK|[^O][^K])', fan_section)
-                status.append('OK' if all(fan == 'OK' for fan in fans) else 'Not OK')
+        
+        if version.startswith('17'):
+            switches = log_data.split("Sensor List: Environmental Monitoring")[1:]
+            if not switches:
+                logging.debug("No fan status information found in log data.")
+                return ["Not available"]
+            for i, switch in enumerate(switches, start=1):
+                match = re.search(r'Switch FAN Speed State Airflow direction.*?(?=SW  PID)', switch, re.DOTALL)
+                if match:
+                    fan_section = match.group(0)
+                    fans = re.findall(r'\d+\s+\d+\s+(OK|[^O][^K])', fan_section)
+                    status.append('OK' if all(fan == 'OK' for fan in fans) else 'Not OK')
+        elif version.startswith('16'):
+            fan_statuses = re.findall(r'Switch (\d+) FAN \d+ is (OK|NOT OK|Faulty|Check)', log_data, re.IGNORECASE)
+            if fan_statuses:
+                switch_statuses = {}
+                for switch, fan_status in fan_statuses:
+                    if switch not in switch_statuses:
+                        switch_statuses[switch] = []
+                    switch_statuses[switch].append(fan_status.upper())
+                for switch in sorted(switch_statuses.keys(), key=int):
+                    if all(fan_status == 'OK' for fan_status in switch_statuses[switch]):
+                        status.append(['OK'])
+                    else:
+                        non_ok_statuses = [fan_status for fan_status in switch_statuses[switch] if fan_status != 'OK']
+                        if non_ok_statuses:
+                            status.append([non_ok_statuses[0]])
+                        else:
+                            status.append(['Not OK'])
+        else:
+            logging.error("Unsupported version")
+            return ["Unsupported version"]
+        
         logging.debug("Fan status extraction completed.")
         return status if status else ["Not available"]
     except Exception as e:
@@ -371,7 +396,7 @@ def get_interface_remark(log_data):
                 switch_interfaces[switch_number].append(interface)
             max_switch_number = max(map(int, switch_interfaces.keys()), default=0)
             interface_remark = [switch_interfaces.get(str(i), []) for i in range(1, max_switch_number + 1)]
-            interface_remark = [sublist if sublist else ['Not available'] for sublist in interface_remark]
+            interface_remark = [sublist if sublist else ['Not avialable'] for sublist in interface_remark]
             logging.debug("Interface remark extraction completed.")
             return interface_remark
         else:
@@ -486,10 +511,10 @@ def process_file(file_path):
                 "Production s/w is deffered or not?": ["Yet to check"],
                 "End-of-Sale Date: HW": ["Yet to check"],
                 "Last Date of Support: HW": ["Yet to check"],
-                "End of Routine Failure Analysis Date: HW": ["Yet to check"],
+                "End of Routine Failure Analysis Date:  HW": ["Yet to check"],
                 "End of Vulnerability/Security Support: HW": ["Yet to check"],
                 "End of SW Maintenance Releases Date: HW": ["Yet to check"],
-                "Remark": ["Not available"]
+                "Remark": ["Yet to check"]
             }
         else:
             data = {}
@@ -582,7 +607,7 @@ def process_file(file_path):
             data["Production s/w is deffered or not?"] = ["Yet to check"] * current_stack_size  # ← FIXED
             data["End-of-Sale Date: HW"] = ["Yet to check"] * current_stack_size  # ← FIXED
             data["Last Date of Support: HW"] = ["Yet to check"] * current_stack_size  # ← FIXED
-            data["End of Routine Failure Analysis Date: HW"] = ["Yet to check"] * current_stack_size  # ← FIXED
+            data["End of Routine Failure Analysis Date:  HW"] = ["Yet to check"] * current_stack_size  # ← FIXED
             data["End of Vulnerability/Security Support: HW"] = ["Yet to check"] * current_stack_size  # ← FIXED
             data["End of SW Maintenance Releases Date: HW"] = ["Yet to check"] * current_stack_size  # ← FIXED
             data["Remark"] = ["Yet to check"] * current_stack_size  # ← FIXED

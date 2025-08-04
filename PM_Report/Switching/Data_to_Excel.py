@@ -2,8 +2,9 @@ import os
 import shutil
 import pandas as pd
 import logging
-from . import Cisco_IOS_XE
-import datetime
+# from . 
+import Cisco_IOS_XE
+from datetime import datetime
 from test import *
 
 # Setup logging
@@ -22,14 +23,15 @@ def append_to_excel(ticket_number, data_list, file_path=None, column_order=None)
             'CPU Utilization', 'Total memory', 'Used memory', 'Free memory', 'Memory Utilization (%)',
             'Total flash memory', 'Used flash memory', 'Free flash memory', 'Used Flash (%)',
             'Fan status', 'Temperature status', 'PowerSupply status', 'Available Free Ports',
-            'End-of-Sale Date: HW', 'Last Date of Support: HW', 'End of Routine Failure Analysis Date: HW',
+            'End-of-Sale Date: HW', 'Last Date of Support: HW', 'End of Routine Failure Analysis Date:  HW',
             'End of Vulnerability/Security Support: HW', 'End of SW Maintenance Releases Date: HW',
             'Any Half Duplex', 'Interface/Module Remark', 'Config Status', 'Config Save Date',
             'Critical logs', 'Remark'
         ]
     if file_path is None:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        file_path = f"{ticket_number}_network_analysis_{timestamp}.xlsx"
+        # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # file_path = f"{ticket_number}_network_analysis_{timestamp}.xlsx"
+        file_path = f"{ticket_number}_network_analysis.xlsx"
 
     formatted_data = []
 
@@ -53,11 +55,11 @@ def append_to_excel(ticket_number, data_list, file_path=None, column_order=None)
                 if key in data:
                     value = data[key]
                     if isinstance(value, list):
-                        row_data[key] = value[i] if i < len(value) else 'NA'
+                        row_data[key] = value[i] if i < len(value) else 'Not available'
                     else:
                         row_data[key] = value
                 else:
-                    row_data[key] = 'NA'
+                    row_data[key] = 'Not available'
             formatted_data.append(row_data)
 
     if not formatted_data:
@@ -96,10 +98,10 @@ def unique_model_numbers_and_serials(data_list):
                 
                 if isinstance(model_value, list) and isinstance(serial_value, list):
                     for model, serial in zip(model_value, serial_value):
-                        if model and model != 'NA' and serial and serial != 'NA':
+                        if model and model != 'Not available' and serial and serial != 'Not available':
                             if model not in model_serials:
                                 model_serials[model] = serial
-                elif model_value and model_value != 'NA' and serial_value and serial_value != 'NA':
+                elif model_value and model_value != 'Not available' and serial_value and serial_value != 'Not available':
                     if model_value not in model_serials:
                         model_serials[model_value] = serial_value
         
@@ -109,10 +111,12 @@ def unique_model_numbers_and_serials(data_list):
         return []
 
 def main():
-    """Test function"""
     try:
-        # Test with single file
-        print(unique_model_numbers_and_serials(data))
+        file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR135977300\DRC01CORESW01_10.20.253.5.txt"
+        directory_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200\Temp"
+        # pp.pprint(Cisco_IOS_XE.process_file(file_path))
+        data = Cisco_IOS_XE.process_directory(directory_path)
+        print(append_to_excel("SVR3456789", data))
     except Exception as e:
         print(f"Error in main: {str(e)}")
 
