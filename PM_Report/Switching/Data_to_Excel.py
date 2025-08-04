@@ -2,8 +2,9 @@ import os
 import shutil
 import pandas as pd
 import logging
-import Cisco_IOS_XE
-from datetime import datetime
+from . import Cisco_IOS_XE
+import datetime
+from test import *
 
 # Setup logging
 log_dir = os.path.join(os.path.dirname(__file__), "Data_to_Excel")
@@ -81,143 +82,39 @@ def append_to_excel(ticket_number, data_list, file_path=None, column_order=None)
         logging.error(f"Error writing to Excel for case {ticket_number}: {str(e)}")
         return None
 
-# This is to make a copy of excel. 
-def process_eox_analysis(original_excel_path):
-    logging.info(f"Creating copy of {original_excel_path}")
+def unique_model_numbers_and_serials(data_list):
     try:
-        directory = os.path.dirname(original_excel_path)
-        filename = os.path.basename(original_excel_path)
-        copy_filename = f"copy_{filename}"
-        copy_excel_path = os.path.join(directory, copy_filename)
-        shutil.copy2(original_excel_path, copy_excel_path)
-        logging.debug(f"Created copy: {copy_excel_path}")
-        return {
-            'status': 'success',
-            'copy_excel_path': copy_excel_path
-        }
-    except Exception as e:
-        logging.error(f"Copy creation failed: {e}")
-        return {
-            'status': 'failed',
-            'copy_excel_path': None
-        }
-
-def unique_model_numbers(data_list):
-    """
-    Extract unique model numbers from processed data
-    
-    Args:
-        data_list: List of dictionaries or single dictionary containing switch data
-    
-    Returns:
-        List of unique model numbers
-    """
-    try:
-        model_numbers = set()
+        model_serials = {}
         
-        # ✅ FIXED: Handle both single dict and list of dicts
         if isinstance(data_list, dict):
             data_list = [data_list]
         
         for data in data_list:
-            if isinstance(data, dict) and "Model number" in data:
+            if isinstance(data, dict) and "Model number" in data and "Serial number" in data:
                 model_value = data["Model number"]
-                
-                if isinstance(model_value, list):
-                    # Handle list of model numbers (multiple switches)
-                    model_numbers.update([model for model in model_value if model and model != 'NA'])
-                elif model_value and model_value != 'NA':
-                    # Handle single model number
-                    model_numbers.add(model_value)
-        
-        return list(model_numbers)
-    except Exception as e:
-        print(f"❌ Error extracting model numbers: {str(e)}")
-        return []
-
-def get_unique_serial_numbers(data_list):
-    """
-    Extract unique serial numbers from processed data
-    """
-    try:
-        serial_numbers = set()
-        
-        if isinstance(data_list, dict):
-            data_list = [data_list]
-        
-        for data in data_list:
-            if isinstance(data, dict) and "Serial number" in data:
                 serial_value = data["Serial number"]
                 
-                if isinstance(serial_value, list):
-                    serial_numbers.update([serial for serial in serial_value if serial and serial != 'NA'])
-                elif serial_value and serial_value != 'NA':
-                    serial_numbers.add(serial_value)
+                if isinstance(model_value, list) and isinstance(serial_value, list):
+                    for model, serial in zip(model_value, serial_value):
+                        if model and model != 'NA' and serial and serial != 'NA':
+                            if model not in model_serials:
+                                model_serials[model] = serial
+                elif model_value and model_value != 'NA' and serial_value and serial_value != 'NA':
+                    if model_value not in model_serials:
+                        model_serials[model_value] = serial_value
         
-        return list(serial_numbers)
+        return [[model, serial] for model, serial in model_serials.items()]
     except Exception as e:
-        print(f"❌ Error extracting serial numbers: {str(e)}")
+        print(f"Error extracting model numbers and serials: {str(e)}")
         return []
-
-def process_and_export(ticket_number, directory_path, output_file_path=None):
-    try:
-        print(f"🔄 Processing directory: {directory_path}")
-        
-        # Process the directory
-        data_list = Cisco_IOS_XE.process_directory(directory_path)
-        
-        if not data_list:
-            return {"success": False, "error": "No data processed from directory"}
-        
-        print(f"✅ Processed {len(data_list)} data sets")
-        
-        # Extract unique information
-        model_numbers = unique_model_numbers(data_list)
-        serial_numbers = get_unique_serial_numbers(data_list)
-        
-        # Export to Excel
-        excel_file = append_to_excel(ticket_number, data_list, output_file_path)
-        
-        return {
-            "success": True,
-            "excel_file": excel_file,
-            "data_count": len(data_list),
-            "unique_models": model_numbers,
-            "unique_serials": serial_numbers,
-            "summary": f"Processed {len(data_list)} switches with {len(model_numbers)} unique models"
-        }
-        
-    except Exception as e:
-        print(f"❌ Error in processing pipeline: {str(e)}")
-        return {"success": False, "error": str(e)}
 
 def main():
     """Test function"""
     try:
         # Test with single file
-        SVR = "SVR3333333333"
-        file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200\Temp\UOBM-9200L-JOT-L03-05_10.31.99.14.txt"
-        
-        if os.path.exists(file_path):
-            print("🔄 Testing single file processing...")
-            data_dict = Cisco_IOS_XE.process_file(file_path)
-            print(f"📊 Data type: {type(data_dict)}")
-            
-            if data_dict:
-                model_numbers = unique_model_numbers(data_dict)
-                print(f"🔧 Unique model numbers: {model_numbers}")
-                
-                # Test Excel export
-                excel_result = append_to_excel(SVR, data_dict, f"{SVR}_test.xlsx")
-                if excel_result:
-                    print(f"✅ Excel file created: {excel_result}")
-            else:
-                print("❌ No data returned from file processing")
-        else:
-            print(f"❌ File not found: {file_path}")
-            
+        print(unique_model_numbers_and_serials(data))
     except Exception as e:
-        print(f"❌ Error in main: {str(e)}")
+        print(f"Error in main: {str(e)}")
 
 if __name__ == "__main__":
     main()
