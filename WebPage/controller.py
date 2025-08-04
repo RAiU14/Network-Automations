@@ -38,18 +38,6 @@ try:
     import Switching.Data_to_Excel as Data_to_Excel
 except ImportError as e:
     logging.error(f"Module import failed: {e}")
-    
-    class MockModule:
-        @staticmethod
-        def eox_tes():
-            return "Mock test completed"
-        
-        @staticmethod
-        def request_EOX_data_from_online(excel_file_path, technology):
-            return True
-    
-    if 'Cisco_EOX' not in globals():
-        Cisco_EOX = MockModule()
 
 def extract_zip_flatten_structure(zip_file_path):
     """Extract zip file with flattened structure"""

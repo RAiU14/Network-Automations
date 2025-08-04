@@ -3,8 +3,7 @@ import os
 import logging
 import datetime  # ← ADDED: Missing import
 import pprint as pp
-# from . 
-import IOS_XE_Stack_Switch
+from . import IOS_XE_Stack_Switch
     
 # Static strings
 NA = "Not available"
