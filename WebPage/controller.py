@@ -184,14 +184,14 @@ def process_upload(request_data: Dict[str, Any], file_obj, upload_folder: str) -
         for values in unique_values:
             unique_pid.append(values[0])
             
-        # fresh_data = funct(data, unique_pid, technology)
+        fresh_data = Cisco_EOX.sub_controller(data, unique_pid, technology)
         # !!! [A & G Merge Happens Here] !!!   
         
         excel_path = ticket_folder / f"{ticket}_analysis.xlsx"
         
         try:
-            Data_to_Excel.append_to_excel(ticket, data, str(excel_path))
-            # Data_to_Excel.append_to_excel(ticket, fresh_data, str(excel_path))
+            # Data_to_Excel.append_to_excel(ticket, data, str(excel_path))
+            Data_to_Excel.append_to_excel(ticket, fresh_data, str(excel_path))
             
             if not excel_path.exists():
                 logging.error("Excel file not created")

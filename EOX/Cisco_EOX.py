@@ -10,8 +10,7 @@ from langdetect import detect
 import re
 
 # Default paths
-default_database_path = r"C:\\Users\\abhi.bs\\OneDrive - NTT Ltd\\Desktop\\(!)\\Repo\\Network-Automations\\Database\\JSON_Files\\eox_pid.json"
-default_scrap_file_path = r"Database\JSON_Files\scrap_pid.json"
+default_database_path = r"Database\JSON_Files\eox_pid.json"
 
 # Program to perform efficient Web-Scrapping
 # Note: This program works as long as the product page from Cisco is not changed~~ 
@@ -449,18 +448,22 @@ def pid_eox_check(pid: str, link: str):
         logging.error(f"Unknown Error occurred during PID_EOX_CHECK for {pid}: {e}\nLink Used: {link}")
         
 # Function to check EOX details on local database
-def request_EOX_data_from_local_db_check(pid_list, db_path = default_database_path):
+def request_EOX_data_from_local_db(unique_pid_list, tech, db_path=default_database_path):
     EOX_data = {}
+    local_data_loaded = False
 
     try:
         logging.info(f"Reading local DB: {db_path}")
         with open(db_path, 'r') as f:
             data = json.load(f)
+        local_data_loaded = True
     except (FileNotFoundError, json.JSONDecodeError) as e:
         logging.error(f"Error reading local DB: {e}")
-        return {pid: [False, "Failed to load data from database"] for pid in pid_list}
+        data = {}
 
-    for pid in pid_list:
+    missing_pids = []
+
+    for pid in unique_pid_list:
         logging.info(f"Checking PID={pid} in local DB")
         entry = data.get(pid)
         if entry:
@@ -468,16 +471,21 @@ def request_EOX_data_from_local_db_check(pid_list, db_path = default_database_pa
             EOX_data[pid] = [True, entry]
         else:
             logging.debug(f"No entry found for PID={pid}")
-            EOX_data[pid] = [False, "Check EOX data online"]
+            missing_pids.append(pid)
 
-    logging.info("Local DB check completed.")
-    return EOX_data
-
-def get_eox_data(pid, db_path):
-    return request_EOX_data_from_local_db_check(pid, db_path)
+    if not local_data_loaded or missing_pids:
+        logging.info("Calling online EOX data fetch for missing or all PIDs.")
+        online_data = request_EOX_data_from_online(
+            unique_pid_list if not local_data_loaded else missing_pids,
+            tech,
+            existing_data=EOX_data
+        )
+        return online_data
+    else:
+        return EOX_data
 
 # Function to scrap data from online
-def eox_online_scrapping(pid, tech="Switches"):
+def eox_online_scrapping(pid, tech):
     EOX_data = {}
 
     logging.info(f"Starting processing for PID: {pid}")
@@ -508,164 +516,110 @@ def eox_online_scrapping(pid, tech="Switches"):
     logging.info("EOX scraping completed.")
     return EOX_data
 
-# WIP need bug fixes in save_scrapped_eox_data
-# Function to store data in scrapped_json from the EOX data which is obtained through online scrapping which is not pre existing
-def save_scrapped_eox_data(new_data_list, db_path=default_database_path, scrap_file_path=default_scrap_file_path):
-    # Ensure the directory exists
-    os.makedirs(os.path.dirname(scrap_file_path), exist_ok=True)
+# Function to get EOX data from Cisco website.
+def request_EOX_data_from_online(unique_pid_list, tech, existing_data=None):
+    logging.info(f"Starting EOX pull for PIDs: {unique_pid_list}")
+    cleaned_data = existing_data if existing_data else {}
 
-    # Load existing scrapped data
-    if os.path.exists(scrap_file_path):
-        try:
-            with open(scrap_file_path, "r") as f:
-                scrapped_db = json.load(f)
-        except json.JSONDecodeError:
-            logging.warning(f"{scrap_file_path} is empty or corrupted. Initializing empty scrapped_db.")
-            scrapped_db = {}
-    else:
-        scrapped_db = {}
-
-    # Load existing EOX PID DB
-    try:
-        with open(db_path, "r") as f:
-            eox_pid_db = json.load(f)
-    except Exception as e:
-        logging.error(f"Failed to load EOX PID DB from {db_path}: {e}")
-        return
-
-    transformed_data = {}
-    for entry in new_data_list:
-        if not isinstance(entry, dict):
-            logging.warning(f"Skipping non-dict entry: {entry}")
-            continue
-
-        for pid, value in entry.items():
-            logging.debug(f"Processing PID: {pid} | Value: {value}")
-            if isinstance(value, list):
-                # Case: Announced with EOX data and related PIDs
-                if len(value) == 3 and value[0] is True:
-                    try:
-                        eox_info = value[1][0]  # Extract EOX data dict
-                        related_pids = value[2]  # Extract related PIDs list
-                        for related_pid in related_pids:
-                            if related_pid not in eox_pid_db and related_pid not in scrapped_db:
-                                transformed_data[related_pid] = eox_info
-                    except Exception as e:
-                        logging.warning(f"Failed to extract EOX info for PID '{pid}': {e}")
-                # Case: Not Announced
-                elif len(value) == 2 and value[0] is False:
-                    if pid not in eox_pid_db and pid not in scrapped_db:
-                        transformed_data[pid] = {"EOX": "Not Announced"}
-                        logging.info(f"PID '{pid}' is not announced. Added with 'EOX': 'Not Announced'.")
-                else:
-                    logging.warning(f"Unexpected format for PID '{pid}': {value}")
-
-    if transformed_data:
-        logging.info(f"Appending {len(transformed_data)} new entries to {scrap_file_path}")
-        scrapped_db.update(transformed_data)
-        try:
-            with open(scrap_file_path, "w") as f:
-                json.dump(scrapped_db, f, indent=4)
-            logging.info("Write successful.")
-        except Exception as e:
-            logging.error(f"Failed to write to {scrap_file_path}: {e}")
-    else:
-        logging.info("No new PIDs to append.")
-
-
-# Function to retrieve unique PID's from the list of PID's received.
-def request_unique_pid_and_serial_numbers(excel_file_path):
-    logging.info(f"Reading Excel file from: {excel_file_path}")
-    
-    try:
-        excel_data = pd.read_excel(excel_file_path, engine="openpyxl")
-        logging.info("Excel file read successfully.")
-    except Exception as e:
-        logging.error(f"Failed to read Excel file: {e}")
-        raise
-
-    target_phrases = ["Check EOX data online", "Failed to load data from database"]
-    logging.debug(f"Target phrases for filtering: {target_phrases}")
-
-    model_number_col = None
-    serial_number_col = None
-
-    for col in excel_data.columns:
-        if str(col).strip() == "Model number":
-            model_number_col = col
-            logging.info(f"Found 'Model number' column: {model_number_col}")
-        if str(col).strip() == "Serial number":
-            serial_number_col = col
-            logging.info(f"Found 'Serial number' column: {serial_number_col}")
-
-    if model_number_col is None:
-        logging.error("Column 'Model number' not found in the Excel file.")
-        raise ValueError("Column 'Model number' not found in the Excel file.")
-    
-    if serial_number_col is None:
-        logging.error("Column 'Serial number' not found in the Excel file.")
-        raise ValueError("Column 'Serial number' not found in the Excel file.")
-
-    row_with_target_phrase = excel_data.apply(
-        lambda row: row.astype(str).str.contains('|'.join(target_phrases), case=False, na=False).any(),
-        axis=1
-    )
-    logging.info(f"Number of rows matching target phrases: {row_with_target_phrase.sum()}")
-
-    filtered_data = excel_data.loc[row_with_target_phrase, [model_number_col, serial_number_col]]
-    filtered_data = filtered_data.dropna().astype(str).apply(lambda x: x.str.strip())
-    filtered_data = filtered_data.drop_duplicates()
-
-    # Convert to list of dictionaries with custom keys
-    unique_model_serial_pairs = [
-        {row[model_number_col] : row[serial_number_col]}
-        for _, row in filtered_data.iterrows()
-    ]
-
-    logging.info(f"Extracted {len(unique_model_serial_pairs)} unique model and serial number pairs.")
-    return unique_model_serial_pairs
-
-
-def request_EOX_data_from_online(excel_file_path):
-    logging.info(f"Starting EOX pull for file: {excel_file_path}")
-    
-    try:
-        pid_dict_list = request_unique_pid_and_serial_numbers(excel_file_path)
-        logging.info(f"Retrieved {len(pid_dict_list)} entries from Excel.")
-    except Exception as e:
-        logging.error(f"Failed to retrieve PID and Serial numbers: {e}")
-        return []
-
-    # Extract all values from each dictionary
-    pid_list = []
-    for entry in pid_dict_list:
-        for keys in entry.keys():
-            pid_list.append(keys)
-
-    logging.info(f"Total PIDs to process: {len(pid_list)}")
-    
-    results = []
-    for pid in pid_list:
+    for pid in unique_pid_list:
         try:
             logging.info(f"Fetching EOX data for PID: {pid}")
-            result = eox_online_scrapping(pid)
-            results.append(result)
+            result = eox_online_scrapping(pid, tech)  # Expected: {'PID': [True, [{EOX}, [related]]]} or {'PID': [False, 'Not Announced']}
+
+            if isinstance(result, dict) and pid in result:
+                value = result[pid]
+
+                # Case 1: [True, [EOX dict, related PIDs]]
+                if (
+                    isinstance(value, list) and len(value) == 2 and
+                    isinstance(value[0], bool) and value[0] is True and
+                    isinstance(value[1], list) and len(value[1]) == 2 and
+                    isinstance(value[1][0], dict)
+                ):
+                    eox_details = value[1][0]
+                    related_pids = value[1][1]
+                    logging.debug(f"Related PIDs for {pid}: {related_pids}")
+                    cleaned_data[pid] = [True, eox_details]
+
+                # Case 2: [False, 'Not Announced'] or similar
+                elif isinstance(value, list) and len(value) == 2 and isinstance(value[0], bool):
+                    cleaned_data[pid] = value
+
+                else:
+                    logging.warning(f"Unexpected inner format for PID {pid}: {value}")
+                    cleaned_data[pid] = [False, "Invalid inner data format"]
+            else:
+                logging.warning(f"Unexpected format for PID {pid}: {result}")
+                cleaned_data[pid] = [False, "Invalid data format"]
+
         except Exception as e:
             logging.error(f"Failed to fetch EOX data for PID '{pid}': {e}")
-            results.append({"pid": pid, "error": str(e)})
+            cleaned_data[pid] = [False, f"Error: {str(e)}"]
 
     logging.info("EOX data pull completed.")
-    print(results)
-    save_scrapped_eox_data(results)
-    return results
+    return cleaned_data
+    
+# Function to update EOX to raw data with just logs.    
+def update_lifecycle_data(data_list, lifecycle_info):
+    # Define regex patterns for each canonical field (HW is optional)
+    field_patterns = {
+        'End-of-Sale Date: HW': r'end\s*[\-:]?\s*of\s*[\-:]?\s*sale\s*[\-:]?\s*date\s*[\-:]?\s*(hw)?',
+        'Last Date of Support: HW': r'last\s*[\-:]?\s*date\s*[\-:]?\s*of\s*[\-:]?\s*support\s*[\-:]?\s*(hw)?',
+        'End of Routine Failure Analysis Date:  HW': r'end\s*[\-:]?\s*of\s*[\-:]?\s*routine\s*[\-:]?\s*failure\s*[\-:]?\s*analysis\s*[\-:]?\s*date\s*[\-:]?\s*(hw)?',
+        'End of Vulnerability/Security Support: HW': r'end\s*[\-:]?\s*of\s*[\-:]?\s*(vulnerability|security)\s*[\-:/]?\s*(security|vulnerability)?\s*[\-:]?\s*support\s*[\-:]?\s*(hw)?',
+        'End of SW Maintenance Releases Date: HW': r'end\s*[\-:]?\s*of\s*[\-:]?\s*sw\s*[\-:]?\s*maintenance\s*[\-:]?\s*releases\s*[\-:]?\s*date\s*[\-:]?\s*(hw)?'
+    }
 
+    fresh_data = []
 
-# Example usage
-if __name__ == "__main__":
-    default_excel_file_path = r"C:\Users\abhi.bs\OneDrive - NTT Ltd\Desktop\Book1.xlsx"
-    # final_result = eox_pull(excel_file_path, db_path)
-    # print(final_result)
-    # json.dumps(final_result, indent=4)
-    pid_list = ["C9200L-24P-4G","C1000-16FP-2G-L"]
-    # local_db_check(pid_list, db_path)
-    request_EOX_data_from_online(default_excel_file_path)
+    try:
+        for index, device_dict in enumerate(data_list):
+            logging.info(f"Processing device group {index + 1}")
+            updated_dict = {key: list(value) for key, value in device_dict.items()}
+
+            for i, model in enumerate(updated_dict.get('Model number', [])):
+                if model in lifecycle_info:
+                    logging.info(f"Updating model '{model}' at index {i}")
+                    lifecycle_entry = lifecycle_info[model]
+
+                    if isinstance(lifecycle_entry, list):
+                        if lifecycle_entry[0] is False:
+                            # Not Announced case
+                            for canonical_field in field_patterns:
+                                if canonical_field in updated_dict and i < len(updated_dict[canonical_field]):
+                                    updated_dict[canonical_field][i] = 'Not Announced'
+                        elif lifecycle_entry[0] is True and isinstance(lifecycle_entry[1], dict):
+                            # Normalize lifecycle data keys
+                            normalized_lifecycle_data = {
+                                re.sub(r'\s+', ' ', key.strip().lower()): value
+                                for key, value in lifecycle_entry[1].items()
+                            }
+
+                            for canonical_field, pattern in field_patterns.items():
+                                if canonical_field in updated_dict and i < len(updated_dict[canonical_field]):
+                                    matched_value = 'Unavailable'
+                                    for key in normalized_lifecycle_data:
+                                        if re.fullmatch(pattern, key):
+                                            matched_value = normalized_lifecycle_data[key]
+                                            break
+                                    updated_dict[canonical_field][i] = matched_value
+                else:
+                    logging.warning(f"Model '{model}' not found in lifecycle_info")
+                    # If model not found, mark all lifecycle fields as Unavailable
+                    for canonical_field in field_patterns:
+                        if canonical_field in updated_dict and i < len(updated_dict[canonical_field]):
+                            updated_dict[canonical_field][i] = 'Unavailable'
+
+            fresh_data.append(updated_dict)
+
+    except Exception as e:
+        logging.error(f"Error during lifecycle update: {e}")
+
+    return fresh_data
+
+ # Controller function to run the whole py file.   
+def sub_controller(raw_data, unique_pid, tech):
+    lifecycle_info = request_EOX_data_from_local_db(unique_pid, tech)
+    complete_data = update_lifecycle_data(raw_data, lifecycle_info)
+    print(complete_data)
+    return complete_data
