@@ -1,0 +1,223 @@
+body { 
+  font-family: Arial, sans-serif; 
+  background: #eef2f7; 
+  margin: 0; 
+  padding: 0;
+}
+
+header {
+  background-color: #004080;
+  color: white;
+  padding: 15px 20px;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+header img { 
+  height: 40px; 
+}
+
+header h1 { 
+  margin: 0; 
+  font-size: 1.5rem; 
+}
+
+.container {
+  max-width: 700px;
+  margin: 30px auto;
+  background: white;
+  border-radius: 8px;
+  padding: 20px 30px;
+  box-shadow: 0 0 10px #ccc;
+}
+
+label {
+  display: block;
+  margin-top: 20px;
+  font-weight: bold;
+}
+
+input[type=text], textarea, select {
+  width: 100%;
+  padding: 8px;
+  margin-top: 5px;
+  box-sizing: border-box;
+  font-size: 1rem;
+  border: 1px solid #aaa;
+  border-radius: 4px;
+}
+
+textarea { 
+  resize: vertical; 
+  height: 80px; 
+}
+
+.file-upload {
+  margin-top: 15px;
+  border: 2px dashed #999;
+  padding: 30px;
+  text-align: center;
+  color: #666;
+  cursor: pointer;
+  transition: background-color 0.3s;
+  border-radius: 8px;
+}
+
+.file-upload.dragover {
+  background-color: #d0ebff;
+  border-color: #3399ff;
+  color: #004080;
+}
+
+.file-upload.file-selected {
+  background-color: #e8f5e8;
+  border-color: #4caf50;
+  color: #2e7d32;
+}
+
+.file-name {
+  font-weight: bold;
+  margin-top: 10px;
+  color: #2e7d32;
+}
+
+.buttons {
+  margin-top: 30px;
+  display: flex;
+  justify-content: space-between;
+}
+
+button {
+  padding: 10px 25px;
+  font-size: 1rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button.reset {
+  background-color: #bbb;
+  color: #444;
+}
+
+button.submit {
+  background-color: #004080;
+  color: white;
+}
+
+button:hover {
+  opacity: 0.9;
+}
+
+/* Flash message styles */
+.flash {
+  margin-bottom: 15px;
+  padding: 12px;
+  border-radius: 6px;
+  position: relative;
+  animation: slideIn 0.5s ease-out;
+}
+
+.flash.success { 
+  background-color: #d4edda; 
+  color: #155724; 
+}
+
+.flash.warning { 
+  background-color: #fff3cd; 
+  color: #856404; 
+}
+
+.flash.danger, .flash.error { 
+  background-color: #f8d7da; 
+  color: #721c24; 
+}
+
+.flash .close-btn {
+  position: absolute;
+  top: 5px;
+  right: 10px;
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0;
+  color: inherit;
+}
+
+.flash.fade-out {
+  animation: fadeOut 1s ease-out forwards;
+}
+
+@keyframes slideIn {
+  from { transform: translateY(-20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* Download section styles */
+.download-section {
+  margin-top: 40px;
+  padding: 20px;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  border: 1px solid #dee2e6;
+}
+
+.download-section h3 {
+  margin: 0 0 15px 0;
+  color: #004080;
+  font-size: 1.2rem;
+}
+
+.download-form {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+}
+
+.download-form .form-group {
+  flex-grow: 1;
+}
+
+.download-form .form-group label {
+  margin-top: 0;
+}
+
+button.download {
+  background-color: #28a745;
+  color: white;
+  white-space: nowrap;
+}
+
+button.download:hover {
+  background-color: #1e7e34;
+}
+
+.status-indicator {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  font-weight: bold;
+}
+
+.status-ready {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.status-not-ready {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.status-checking {
+  background-color: #fff3cd;
+  color: #856404;
+}
