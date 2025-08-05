@@ -3,7 +3,8 @@ import os
 import logging
 import datetime  # ← ADDED: Missing import
 import pprint as pp
-from . import IOS_XE_Stack_Switch
+# from . 
+import IOS_XE_Stack_Switch
     
 # Static strings
 NA = "Not available"
@@ -236,60 +237,126 @@ def get_fan_status(log_data):
 
 def get_temperature_status(log_data):
     try:
+        version = get_current_sw_version(log_data)
         logging.info("Starting temperature status extraction.")
-        temperature_status = re.findall(r'SYSTEM (INLET|OUTLET|HOTSPOT)\s+(\d+)\s+(\w+)', log_data)
-        if not temperature_status:
-            logging.debug("No temperature status information found in log data.")
-            return ["Not available"]
-        switch_temps = {}
-        for temp in temperature_status:
-            switch = temp[1]
-            if switch not in switch_temps:
-                switch_temps[switch] = []
-            switch_temps[switch].append(temp[2])
-        result = []
-        for switch, temps in switch_temps.items():
-            result.append('OK' if all(temp.upper() == 'GREEN' for temp in temps) else 'Not OK')
-        logging.debug("Temperature status extraction completed.")
-        return result if result else ["Not available"]
+        if version.startswith('17'):
+            temperature_status = re.findall(r'SYSTEM (INLET|OUTLET|HOTSPOT)\s+(\d+)\s+(\w+)', log_data)
+            if not temperature_status:
+                logging.debug("No temperature status information found in log data.")
+                return ["Not available"]
+            switch_temps = {}
+            for temp in temperature_status:
+                switch = temp[1]
+                if switch not in switch_temps:
+                    switch_temps[switch] = []
+                switch_temps[switch].append(temp[2])
+            result = []
+            for switch, temps in switch_temps.items():
+                result.append('OK' if all(temp.upper() == 'GREEN' for temp in temps) else 'Not OK')
+            logging.debug("Temperature status extraction completed.")
+            return result if result else ["Not available"]
+        elif version.startswith('16'):
+            temperature_status = re.findall(r'Switch (\d+): SYSTEM TEMPERATURE is (.+)', log_data)
+            if not temperature_status:
+                logging.debug("No temperature status information found in log data.")
+                return ["Not available"]
+            result = []
+            for temp in temperature_status:
+                result.append('OK' if temp[1].strip().upper() == 'OK' else 'NOT OK')
+            logging.debug("Temperature status extraction completed.")
+            return result if result else ["Not available"]
+        else:
+            logging.error("Unsupported version")
+            return ["Unsupported version"]
     except Exception as e:
         logging.error(f"Error in get_temperature_status: {str(e)}")
         return f"Error in get_temperature_status: {str(e)}"
 
 def get_power_supply_status(log_data):
     try:
+        version = get_current_sw_version(log_data)
         logging.info("Starting power supply status extraction.")
         results = []
-        sensor_list_starts = [m.start() for m in re.finditer(r"Sensor List: Environmental Monitoring", log_data)]
-        if not sensor_list_starts:
-            logging.debug("No sensor list found in log data.")
-            return ["NA: No sensor list found"]
+        if version.startswith('17'):
+            sensor_list_starts = [m.start() for m in re.finditer(r"Sensor List: Environmental Monitoring", log_data)]
+            if not sensor_list_starts:
+                logging.debug("No sensor list found in log data.")
+                return ["NA: No sensor list found"]
 
-        for i, start_index in enumerate(sensor_list_starts):
-            switch_block_start = start_index
-            switch_block_end = len(log_data)
-            if i + 1 < len(sensor_list_starts):
-                switch_block_end = sensor_list_starts[i+1]
+            for i, start_index in enumerate(sensor_list_starts):
+                switch_block_start = start_index
+                switch_block_end = len(log_data)
+                if i + 1 < len(sensor_list_starts):
+                    switch_block_end = sensor_list_starts[i+1]
 
-            current_switch_data = log_data[switch_block_start:switch_block_end]
-            switch_number = i + 1
-            alarm_status = "OK"
+                current_switch_data = log_data[switch_block_start:switch_block_end]
+                switch_number = i + 1
+                alarm_status = "OK"
 
-            sensor_section_match = re.search(r'Sensor List: Environmental Monitoring\s*([\s\S]*?)(?:Switch FAN Speed State Airflow direction|SW\s+PID|$)', current_switch_data, re.DOTALL)
-            if sensor_section_match:
-                sensor_lines = sensor_section_match.group(1).strip().split('\n')
-                for line in sensor_lines:
-                    if re.search(r'\s+FAULTY\s+', line):
-                        alarm_status = "Not OK"
+                sensor_section_match = re.search(r'Sensor List: Environmental Monitoring\s*([\s\S]*?)(?:Switch FAN Speed State Airflow direction|SW\s+PID|$)', current_switch_data, re.DOTALL)
+                if sensor_section_match:
+                    sensor_lines = sensor_section_match.group(1).strip().split('\n')
+                    for line in sensor_lines:
+                        if re.search(r'\s+FAULTY\s+', line):
+                            alarm_status = "Not OK"
+                            break
+
+                if alarm_status == "OK":
+                    psu_pid_section_match = re.search(r'SW\s+PID.*?(---\s*|$)', current_switch_data, re.DOTALL)
+                    if psu_pid_section_match:
+                        psu_pid_section = psu_pid_section_match.group(0)
+                        if re.search(r'No Input Power|Bad', psu_pid_section):
+                            alarm_status = "ALARM"
+                results.append(alarm_status)
+        elif version.startswith('16'):
+            results = {}
+            lines = log_data.strip().split('\n')
+            pdu_line_pattern = re.compile(r'^\s*(\d+)[AB]\s+')
+            
+            pdu_section_header = re.compile(r'SW\s+PID\s+.*Serial#\s+.*Status')
+            
+            pdu_lines_start_index = -1
+            for i, line in enumerate(lines):
+                if pdu_section_header.search(line):
+                    pdu_lines_start_index = i + 2 # Header line + separator line
+                    break
+
+            if pdu_lines_start_index != -1:
+                for line in lines[pdu_lines_start_index:]:
+                    if not line.strip() or '------------------' in line:
                         break
+                    
+                    if pdu_line_pattern.match(line):
+                        parts = line.strip().split()
+                        
+                        try:
+                            switch_number = int(parts[0][:-1])
+                        except (ValueError, IndexError):
+                            continue
+                        
+                        status = "UNKNOWN"
+                        
+                        if "Not Present" in line:
+                            status = "Not Present"
+                        elif len(parts) > 3:
+                            status = parts[3].strip()
 
-            if alarm_status == "OK":
-                psu_pid_section_match = re.search(r'SW\s+PID.*?(---\s*|$)', current_switch_data, re.DOTALL)
-                if psu_pid_section_match:
-                    psu_pid_section = psu_pid_section_match.group(0)
-                    if re.search(r'No Input Power|Bad', psu_pid_section):
-                        alarm_status = "ALARM"
-            results.append(alarm_status)
+                        if switch_number not in results:
+                            results[switch_number] = []
+                        
+                        is_ok = (status == "OK" or status == "Not Present")
+                        results[switch_number].append(is_ok)
+
+            final_statuses = []
+            if results:
+                sorted_switch_numbers = sorted(results.keys())
+                for switch_num in sorted_switch_numbers:
+                    if len(results.get(switch_num, [])) == 2 and all(results.get(switch_num, [])):
+                        final_statuses.append("OK")
+                    else:
+                        final_statuses.append("NOT OK")
+            
+            return final_statuses if final_statuses else ["Not available"]
         logging.debug("Power supply status extraction completed.")
         return results if results else ["Not available"]
     except Exception as e:

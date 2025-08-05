@@ -2,7 +2,8 @@ import os
 import shutil
 import pandas as pd
 import logging
-from . import Cisco_IOS_XE
+# from . 
+import Cisco_IOS_XE
 import datetime
 from test import *
 
@@ -10,6 +11,12 @@ from test import *
 log_dir = os.path.join(os.path.dirname(__file__), "Data_to_Excel")
 os.makedirs(log_dir, exist_ok=True)
 logging.basicConfig(filename=os.path.join(log_dir, f"{datetime.datetime.today().strftime('%Y-%m-%d')}.log"), level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+
+def _unwrap_value(val):
+    while isinstance(val, list) and len(val) == 1:
+        val = val[0]
+    return val
 
 # This function is used to write/append values to excel.
 def append_to_excel(ticket_number, data_list, file_path=None, column_order=None):
@@ -53,10 +60,13 @@ def append_to_excel(ticket_number, data_list, file_path=None, column_order=None)
             for key in column_order:
                 if key in data:
                     value = data[key]
+                    # Unwrap the value here
                     if isinstance(value, list):
-                        row_data[key] = value[i] if i < len(value) else 'Not available'
+                        unwrapped_value = _unwrap_value(value[i] if i < len(value) else 'Not available')
+                        row_data[key] = unwrapped_value
                     else:
-                        row_data[key] = value
+                        unwrapped_value = _unwrap_value(value)
+                        row_data[key] = unwrapped_value
                 else:
                     row_data[key] = 'Not available'
             formatted_data.append(row_data)
@@ -112,7 +122,7 @@ def unique_model_numbers_and_serials(data_list):
 def main():
     try:
         file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR135977300\DRC01CORESW01_10.20.253.5.txt"
-        directory_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200\Temp"
+        directory_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200"
         # pp.pprint(Cisco_IOS_XE.process_file(file_path))
         data = Cisco_IOS_XE.process_directory(directory_path)
         print(append_to_excel("SVR3456789", data))
