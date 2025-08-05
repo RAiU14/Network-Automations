@@ -128,12 +128,19 @@ document.querySelector('button[type="reset"]').addEventListener('click', (e) => 
       }
     }, 1000);
   });
+  
+  // Remove loading message if exists
+  const loadingMessage = document.getElementById('loading-message');
+  if (loadingMessage) {
+    loadingMessage.remove();
+  }
 });
 
-// Form validation
-document.getElementById('uploadForm').addEventListener('submit', e => {
+// Form submission with loading feedback
+document.getElementById('uploadForm').addEventListener('submit', function(e) {
   const ticketValue = ticketInput.value.trim();
   
+  // Validation
   if (!ticketValue) {
     e.preventDefault();
     alert('Ticket number is required.');
@@ -151,6 +158,28 @@ document.getElementById('uploadForm').addEventListener('submit', e => {
     alert('Please upload a zip file.');
     return;
   }
+  
+  // Show loading feedback immediately
+  const submitBtn = this.querySelector('.submit');
+  const originalText = submitBtn.textContent;
+  
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Uploading...';
+  
+  // Create loading message
+  let loadingMessage = document.getElementById('loading-message');
+  if (!loadingMessage) {
+    loadingMessage = document.createElement('div');
+    loadingMessage.id = 'loading-message';
+    loadingMessage.className = 'loading-message';
+    loadingMessage.textContent = '⏳ Uploading file... Processing will start in background!';
+    
+    // Insert after form
+    this.parentNode.insertBefore(loadingMessage, this.nextSibling);
+  }
+  
+  // Re-enable button after page reload (handled by browser)
+  // The Flask redirect will cause page reload, clearing the disabled state
 });
 
 // Download functionality
@@ -180,12 +209,8 @@ function checkAndDownload() {
         statusDiv.innerHTML = '<div class="status-indicator status-ready">✅ Report ready for download</div>';
         // Trigger download
         window.location.href = `/download/${ticket}`;
-      } else if (data.ticket_exists) {
-        let message = '⏳ Processing not complete';
-        if (data.processing_status) {
-          message += ` (Status: ${data.processing_status})`;
-        }
-        statusDiv.innerHTML = `<div class="status-indicator status-not-ready">${message}</div>`;
+      } else if (data.uploaded) {
+        statusDiv.innerHTML = '<div class="status-indicator status-not-ready">⏳ Processing not complete yet. Try again in a few minutes.</div>';
       } else {
         statusDiv.innerHTML = '<div class="status-indicator status-not-ready">❌ Ticket not found</div>';
       }

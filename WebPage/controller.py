@@ -1,3 +1,4 @@
+# controller.py - Business Logic Layer
 import os
 import sys
 import json
@@ -20,7 +21,7 @@ if os.path.exists(pm_report_dir):
 if os.path.exists(eox_dir):
     sys.path.insert(0, eox_dir)
 
-# Setup logging - Single setup only
+# Setup logging
 root_dir = os.path.dirname(current_dir)
 log_dir = os.path.join(root_dir, "Logs")
 os.makedirs(log_dir, exist_ok=True)
@@ -36,8 +37,28 @@ try:
     import Cisco_EOX
     import Switching.Cisco_IOS_XE as Cisco_IOS_XE
     import Switching.Data_to_Excel as Data_to_Excel
+    logging.info("All modules imported successfully")
 except ImportError as e:
     logging.error(f"Module import failed: {e}")
+    
+    class MockModule:
+        @staticmethod
+        def eox_tes():
+            logging.warning("Mock EOX test - real module not available")
+            return "Mock test completed"
+        
+        @staticmethod
+        def request_EOX_data_from_online(excel_file_path, technology):
+            logging.warning("Mock EOX processing - real module not available")
+            return True
+        
+        @staticmethod
+        def sub_controller(data, unique_pid, technology):
+            logging.warning("Mock sub_controller - real module not available")
+            return data
+    
+    if 'Cisco_EOX' not in globals():
+        Cisco_EOX = MockModule()
 
 def extract_zip_flatten_structure(zip_file_path):
     """Extract zip file with flattened structure"""
@@ -145,12 +166,6 @@ def process_upload(request_data: Dict[str, Any], file_obj, upload_folder: str) -
             logging.error("ZIP extraction failed")
             return False
         
-        # EOX test
-        try:
-            Cisco_EOX.eox_tes()
-        except Exception as e:
-            logging.error(f"EOX test failed: {e}")
-        
         # Process with Cisco_IOS_XE
         if not modules['Cisco_IOS_XE']:
             logging.error("Cisco_IOS_XE module unavailable")
@@ -167,18 +182,20 @@ def process_upload(request_data: Dict[str, Any], file_obj, upload_folder: str) -
             logging.warning("Data_to_Excel module unavailable")
             return True
         
-        unique_values = Data_to_Excel.unique_model_numbers_and_serials(data)
-        unique_pid = []
-        for values in unique_values:
-            unique_pid.append(values[0])
-            
-        fresh_data = Cisco_EOX.sub_controller(data, unique_pid, technology)
-        # !!! [A & G Merge Happens Here] !!!   
+        try:
+            unique_values = Data_to_Excel.unique_model_numbers_and_serials(data)
+            unique_pid = []
+            for values in unique_values:
+                unique_pid.append(values[0])
+                
+            fresh_data = Cisco_EOX.sub_controller(data, unique_pid, technology)
+        except Exception as e:
+            logging.error(f"EOX sub_controller failed: {e}")
+            fresh_data = data  # Use original data if EOX fails
         
         excel_path = ticket_folder / f"{ticket}_analysis.xlsx"
         
         try:
-            # Data_to_Excel.append_to_excel(ticket, data, str(excel_path))
             Data_to_Excel.append_to_excel(ticket, fresh_data, str(excel_path))
             
             if not excel_path.exists():
@@ -204,6 +221,7 @@ def process_upload(request_data: Dict[str, Any], file_obj, upload_folder: str) -
         except Exception as e:
             logging.error(f"Copy creation failed: {e}")
         
+        logging.info(f"Upload processing completed successfully for ticket: {ticket}")
         return True
         
     except Exception as e:
