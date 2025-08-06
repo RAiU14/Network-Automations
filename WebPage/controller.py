@@ -178,6 +178,7 @@ def process_upload(request_data: Dict[str, Any], file_obj, upload_folder: str) -
             return False
         
         # Excel processing
+        # print("Initial data :\n", data)
         if not modules['Data_to_Excel']:
             logging.warning("Data_to_Excel module unavailable")
             return True
@@ -187,8 +188,8 @@ def process_upload(request_data: Dict[str, Any], file_obj, upload_folder: str) -
             unique_pid = []
             for values in unique_values:
                 unique_pid.append(values[0])
-                
             fresh_data = Cisco_EOX.sub_controller(data, unique_pid, technology)
+            # print("Fresh data :\n", fresh_data)
         except Exception as e:
             logging.error(f"EOX sub_controller failed: {e}")
             fresh_data = data  # Use original data if EOX fails

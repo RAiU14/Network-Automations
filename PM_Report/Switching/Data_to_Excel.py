@@ -2,8 +2,7 @@ import os
 import shutil
 import pandas as pd
 import logging
-# from . 
-import Cisco_IOS_XE
+from . import Cisco_IOS_XE
 import datetime
 from test import *
 

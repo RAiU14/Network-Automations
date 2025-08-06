@@ -3,8 +3,7 @@ import os
 import logging
 import datetime  # ← ADDED: Missing import
 import pprint as pp
-# from . 
-import IOS_XE_Stack_Switch
+from . import IOS_XE_Stack_Switch
     
 # Static strings
 NA = "Not available"
@@ -63,7 +62,7 @@ def get_serial_number(log_data):
 def get_uptime(log_data):
     try:
         logging.info("Starting uptime search.")
-        match = re.search(r"uptime is\s+(.+)", log_data)
+        match = re.search(rf"{get_hostname(log_data)} uptime is\s+(.+)", log_data)
         logging.debug("Uptime search completed.")
         return match.group(1) if match else "Not available"
     except Exception as e:
