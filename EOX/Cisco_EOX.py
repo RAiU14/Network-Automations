@@ -621,5 +621,5 @@ def update_lifecycle_data(data_list, lifecycle_info):
 def sub_controller(raw_data, unique_pid, tech):
     lifecycle_info = request_EOX_data_from_local_db(unique_pid, tech)
     complete_data = update_lifecycle_data(raw_data, lifecycle_info)
-    print(complete_data)
+    # print("Completed")
     return complete_data
