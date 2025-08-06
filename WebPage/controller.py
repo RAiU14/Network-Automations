@@ -202,7 +202,9 @@ def process_upload(request_data: Dict[str, Any], file_obj, upload_folder: str) -
             if not excel_path.exists():
                 logging.error("Excel file not created")
                 return False
-            
+        
+            Data_to_Excel.process_and_style_excel(str(excel_path)) 
+               
         except Exception as e:
             logging.error(f"Excel creation failed: {e}")
             return False

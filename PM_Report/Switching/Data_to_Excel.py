@@ -1,16 +1,12 @@
 import os
-import shutil
 import pandas as pd
 import logging
 from . import Cisco_IOS_XE
-import datetime
-from test import *
-
-# Setup logging
-log_dir = os.path.join(os.path.dirname(__file__), "Data_to_Excel")
-os.makedirs(log_dir, exist_ok=True)
-logging.basicConfig(filename=os.path.join(log_dir, f"{datetime.datetime.today().strftime('%Y-%m-%d')}.log"), level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-
+import re
+from datetime import datetime, timedelta
+from dateutil import parser
+import openpyxl
+from openpyxl.styles import PatternFill, Alignment, Font
 
 def _unwrap_value(val):
     while isinstance(val, list) and len(val) == 1:
@@ -118,6 +114,149 @@ def unique_model_numbers_and_serials(data_list):
         print(f"Error extracting model numbers and serials: {str(e)}")
         return []
 
+def process_and_style_excel(file_path):
+    # Load Excel file
+    try:
+        df = pd.read_excel(file_path, engine='openpyxl', keep_default_na=False, na_values=[])
+        logging.info("Excel file loaded successfully.")
+    except Exception as e:
+        logging.error(f"Failed to load Excel file: {e}")
+        raise
+
+    # Recommendation functions
+    def uptime(row):
+        try:
+            matches = re.findall(r'(\d+)\s+(year|week|day|hour|minute|second)s?', str(row.iloc[5]))
+            time_dict = {unit: int(value) for value, unit in matches}
+            if time_dict.get('year', 0) > 1 or (
+                time_dict.get('year', 0) == 1 and any(unit in time_dict for unit in ['week', 'day', 'hour', 'minute', 'second'])
+            ):
+                return "Consider to power cycle the device at the nearest maintenance window."
+            total_days = (
+                time_dict.get('week', 0) * 7 +
+                time_dict.get('day', 0) +
+                time_dict.get('hour', 0) / 24 +
+                time_dict.get('minute', 0) / 1440 +
+                time_dict.get('second', 0) / 86400
+            )
+            if total_days > 366:
+                return "Consider to power cycle the device at the nearest maintenance window"
+        except Exception as e:
+            logging.warning(f"Error in uptime: {e}")
+
+    def simple_check(row, index, trigger, message):
+        try:
+            if row.iloc[index] == trigger:
+                return message
+        except Exception as e:
+            logging.warning(f"Error in check at index {index}: {e}")
+
+    def threshold_check(row, index, threshold, message):
+        try:
+            if isinstance(row.iloc[index], (int, float)) and row.iloc[index] >= threshold:
+                return message
+        except Exception as e:
+            logging.warning(f"Error in threshold check at index {index}: {e}")
+
+    def hardware_recommendations(row):
+        try:
+            today = datetime.today()
+            one_year_later = today + timedelta(days=365)
+            has_passed = is_approaching = False
+            for i in range(27, 32):
+                try:
+                    date = parser.parse(str(row.iloc[i]), fuzzy=True)
+                    has_passed |= date < today
+                    is_approaching |= today <= date <= one_year_later
+                except (ValueError, TypeError):
+                    continue
+            if has_passed and is_approaching:
+                return "One of the EOS milestones has already passed for the device model, please consider a hardware refresh."
+            if has_passed:
+                return "Device has already passed the last date of support from vendor, please consider hardware refresh."
+            if is_approaching:
+                return "Device is approaching the EOS soon, please consider a hardware refresh."
+        except Exception as e:
+            logging.warning(f"Error in hardware_recommendations: {e}")
+
+    functions = [
+        uptime,
+        lambda r: simple_check(r, 13, "YES", "The debug is enabled, please review the debug configurations and disable it as needed."),
+        lambda r: threshold_check(r, 18, 0.8, "Memory utilization is found to be high, please review top processes consuming more memory."),
+        lambda r: threshold_check(r, 22, 0.8, "Flash memory utilization is observed to be high, kindly review the top processes or files contributing to elevated flash usage."),
+        lambda r: simple_check(r, 25, "OK", None) or "PSU functionalities are abnormal, try to reseat the PSU and verify the status.",
+        lambda r: simple_check(r, 24, "OK", None) or "Error noticed in fan functionality, kindly review.",
+        lambda r: simple_check(r, 24, "OK", None) or "Abnormalities noticed in device temperature, suggested to check the fan status and also room temperature if required.",
+        hardware_recommendations,
+        lambda r: simple_check(r, 32, "YES", "Enable full duplex mode on all applicable interfaces to prevent performance issues."),
+        lambda r: simple_check(r, 34, "YES", "Unsaved configuration detected, recommended to save configurations to prevent loss during reboot."),
+        lambda r: simple_check(r, 36, "YES", "Critical logs found in the device, please review.")
+    ]
+
+    def generate_comment(row):
+        comments = [func(row) for func in functions if func(row)]
+        return "\n".join(comments)
+
+    try:
+        df[df.columns[37]] = df.apply(generate_comment, axis=1)
+        df.to_excel(file_path, index=False, engine='openpyxl')
+        logging.info("Excel file updated with recommendations.")
+    except Exception as e:
+        logging.error(f"Failed to update Excel file: {e}")
+        raise
+
+    # Post-processing: styling, formatting, highlighting
+    try:
+        wb = openpyxl.load_workbook(file_path)
+        red_fill = PatternFill(start_color="bc4f5e", end_color="bc4f5e", fill_type="solid")
+        purple_fill = PatternFill(start_color="CBC3E3", end_color="CBC3E3", fill_type="solid")
+        center_wrap_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        bold_font = Font(bold=True)
+        percentage_columns = ["CPU Utilization", "Memory Utilization (%)", "Used Flash (%)"]
+        date_columns = [
+            "s/w release date", "End-of-Sale Date: HW", "Last Date of Support: HW",
+            "End of Routine Failure Analysis Date:  HW", "End of Vulnerability/Security Support: HW",
+            "End of SW Maintenance Releases Date: HW"
+        ]
+
+        for sheet in wb.worksheets:
+            header = [cell.value for cell in sheet[1]]
+            percent_indexes = [header.index(col) for col in percentage_columns if col in header]
+            date_indexes = [header.index(col) for col in date_columns if col in header]
+
+            for cell in sheet[1]:
+                cell.fill = purple_fill
+                cell.alignment = center_wrap_align
+                cell.font = bold_font
+
+            for row in sheet.iter_rows(min_row=2):
+                for cell in row:
+                    if isinstance(cell.value, str) and cell.value.strip() in [
+                        "Unavailable", "Invalid inner data format", "Invalid data format", "Check manually", "Require Manual Check", "Yet to check"
+                    ] or (isinstance(cell.value, str) and cell.value.startswith("Error:")):
+                        cell.fill = red_fill
+                    cell.alignment = center_wrap_align
+
+                for idx in percent_indexes:
+                    cell = row[idx]
+                    if isinstance(cell.value, (int, float)):
+                        cell.number_format = '0.00%'
+
+                for idx in date_indexes:
+                    cell = row[idx]
+                    if isinstance(cell.value, datetime):
+                        cell.number_format = 'mmmm dd, yyyy'
+
+            for col in sheet.columns:
+                max_length = max((len(str(cell.value)) for cell in col if cell.value), default=0)
+                sheet.column_dimensions[col[0].column_letter].width = max_length + 2
+
+        wb.save(file_path)
+        logging.info("Post-processing completed: styling, formatting, highlighting.")
+    except Exception as e:
+        logging.error(f"Post-processing failed: {e}")
+        raise
+    
 def main():
     try:
         file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR135977300\DRC01CORESW01_10.20.253.5.txt"

@@ -44,7 +44,7 @@ def get_ip_address(file_path):
         file_name = os.path.basename(file_path)
         match = re.search(r"_(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\.(txt|log)", file_name)
         logging.debug("IP address extraction completed.")
-        return [file_name, match.group(1) if match else "Check manually"]
+        return [file_name, match.group(1) if match else "Require Manual Check"]
     except Exception as e:
         logging.error(f"Error in get_ip_address: {str(e)}")
         return [f"Error in get_ip_address: {str(e)}", NA]
@@ -374,7 +374,7 @@ def get_debug_status(log_data):
             debug_section_match = re.search(rf"Ip Address\s+Port\s*-+\|----------\s*([\s\S]*?)\n{hostname}#", log_data[match.end():], re.IGNORECASE)
             if debug_section_match and debug_section_match.group(1).strip():
                 logging.debug("Debug status extraction completed.")
-                return "Require Manual Check."
+                return "Require Manual Check"
             else:
                 logging.debug("No debug section found in log data.")
                 return "Command not found."
