@@ -269,6 +269,8 @@ Log_samples/
 
 Temp/
 Cisco 3750 switch.py
+Cisco 3000 switch.py
+
 
 Database/Remarks.py
 PM_Report/Switching/Cisco_9000_switch.py

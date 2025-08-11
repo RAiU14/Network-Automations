@@ -400,7 +400,9 @@ def get_available_ports(log_data):
                 if 'notconnect' in parts and '1' in parts:
                     try:
                         interface = parts[0]
-                        switch_number = int(interface.split('/')[0].replace('Gi', '').replace('Te', '').replace('Ap', '').replace('Po', ''))
+                        # switch_number = int(interface.split('/')[0].replace('Gi', '').replace('Te', '').replace('Ap', '').replace('Po', ''))
+                        # removed Po from considering, this removed bug.
+                        switch_number = int(interface.split('/')[0].replace('Gi', '').replace('Te', '').replace('Ap', ''))
                         if switch_number not in ports:
                             ports[switch_number] = []
                         ports[switch_number].append(interface)
@@ -410,6 +412,7 @@ def get_available_ports(log_data):
             count = sum(len(port) for port in port_list)
             if count:
                 logging.debug("Available ports extraction completed.")
+                # print([[len(port)] for port in port_list])
                 return [[len(port)] for port in port_list]
             else:
                 logging.debug("No available ports found in log data.")
@@ -442,7 +445,7 @@ def get_half_duplex_ports(log_data):
             return half_duplex_ports_per_switch
         else:
             logging.debug("No half duplex ports found in log data.")
-            return [["NO"]] * current_stack_size  
+            return [["0"]] * current_stack_size  
     except Exception as e:
         logging.error(f"Error in get_half_duplex_ports: {str(e)}")
         return [["Error"]] * current_stack_size
