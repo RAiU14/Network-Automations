@@ -1,4 +1,4 @@
-# app.py - Enhanced with True Parallel Processing
+# app.py - Non-Blocking Concurrent Upload System for Production
 import os
 import sys
 import json
@@ -9,7 +9,7 @@ import datetime
 import threading
 import atexit
 from concurrent.futures import ThreadPoolExecutor
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file, abort
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, abort, jsonify
 
 # Import controller functions
 from controller import process_upload
@@ -56,10 +56,61 @@ def validate_ticket_number(ticket: str) -> bool:
     pattern = r'^SVR\d+$'
     return bool(re.match(pattern, ticket))
 
-def async_process_upload(form_data, file_path, upload_folder):
-    """Process upload in background thread"""
+def check_existing_ticket(ticket: str) -> dict:
+    """Check if ticket already exists and return detailed status"""
+    ticket_folder = os.path.join(UPLOAD_FOLDER, ticket)
+    excel_file = os.path.join(ticket_folder, f"{ticket}_analysis.xlsx")
+    zip_file = os.path.join(ticket_folder, f"{ticket}.zip")
+    metadata_file = os.path.join(ticket_folder, 'metadata.json')
+    
+    # Get file information if they exist
+    status = {
+        'ticket': ticket,
+        'folder_exists': os.path.exists(ticket_folder),
+        'excel_exists': os.path.exists(excel_file),
+        'zip_exists': os.path.exists(zip_file),
+        'metadata_exists': os.path.exists(metadata_file),
+        'ticket_folder': ticket_folder,
+        'excel_file': excel_file,
+        'zip_file': zip_file
+    }
+    
+    # Add metadata info if available
+    if status['metadata_exists']:
+        try:
+            with open(metadata_file, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+                status['metadata'] = {
+                    'timestamp': metadata.get('timestamp'),
+                    'technology': metadata.get('technology'),
+                    'comment': metadata.get('comment')
+                }
+        except Exception as e:
+            logging.error(f"Error reading metadata for {ticket}: {e}")
+            status['metadata'] = {}
+    
+    # Add file timestamps and sizes
+    if status['excel_exists']:
+        try:
+            status['excel_size'] = os.path.getsize(excel_file)
+            status['excel_modified'] = datetime.datetime.fromtimestamp(os.path.getmtime(excel_file)).strftime('%Y-%m-%d %H:%M:%S')
+        except Exception:
+            pass
+    
+    if status['zip_exists']:
+        try:
+            status['zip_size'] = os.path.getsize(zip_file)
+            status['zip_modified'] = datetime.datetime.fromtimestamp(os.path.getmtime(zip_file)).strftime('%Y-%m-%d %H:%M:%S')
+        except Exception:
+            pass
+    
+    return status
+
+def async_process_upload(form_data, file_path, upload_folder, overwrite_existing=False):
+    """Process upload in background thread - non-blocking"""
     try:
         logging.info(f"[CONCURRENT] Starting background processing for ticket: {form_data['ticket']}")
+        logging.info(f"[CONCURRENT] Overwrite mode: {overwrite_existing}")
         
         # Create a mock file object for the controller
         class FileObj:
@@ -76,8 +127,8 @@ def async_process_upload(form_data, file_path, upload_folder):
         # Create file object
         file_obj = FileObj(file_path, f"{form_data['ticket']}.zip")
         
-        # Call your existing process_upload function
-        success = process_upload(form_data, file_obj, upload_folder)
+        # Call your existing process_upload function with overwrite flag
+        success = process_upload(form_data, file_obj, upload_folder, overwrite_existing)
         
         if success:
             logging.info(f"[CONCURRENT] Background processing completed successfully for ticket: {form_data['ticket']}")
@@ -89,6 +140,7 @@ def async_process_upload(form_data, file_path, upload_folder):
 
 @app.route('/')
 def index():
+    """Main upload page"""
     logging.info("Index route accessed")
     try:
         technologies = ['Wireless', 'Switches', 'Security', 'Others']
@@ -109,10 +161,40 @@ def index():
         flash('An error occurred while loading the page', 'error')
         return render_template('upload.html', technologies=['Wireless', 'Switches', 'Security', 'Others'])
 
+@app.route('/api/check_ticket', methods=['POST'])
+def api_check_ticket():
+    """API endpoint to check if ticket exists (for JavaScript duplicate detection)"""
+    try:
+        data = request.get_json()
+        ticket = data.get('ticket', '').strip()
+        
+        if not validate_ticket_number(ticket):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid ticket format'
+            }), 400
+        
+        status = check_existing_ticket(ticket)
+        logging.info(f"API check for ticket {ticket}: folder_exists={status['folder_exists']}, excel_exists={status['excel_exists']}")
+        
+        return jsonify({
+            'success': True,
+            'exists': status['folder_exists'] and status['excel_exists'],
+            'ticket': ticket,
+            'details': status
+        })
+        
+    except Exception as e:
+        logging.error(f"Error in API check ticket: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 @app.route('/upload', methods=['POST'])
 def upload():
-    """Enhanced upload with concurrent processing"""
-    logging.info("Upload route accessed")
+    """Non-blocking upload route for concurrent file processing"""
+    logging.info("Upload route accessed - non-blocking mode")
 
     try:
         # Extract request data quickly
@@ -122,91 +204,62 @@ def upload():
             'technology': request.form.get('technology', '')
         }
         file_obj = request.files.get('file')
+        overwrite_confirmed = request.form.get('overwrite_confirmed', 'false') == 'true'
         
         # Basic validation
         if not form_data['ticket'] or not file_obj:
-            flash('Ticket number and file are required', 'error')
-            return redirect(url_for('index'))
+            return jsonify({
+                'success': False,
+                'error': 'Ticket number and file are required'
+            }), 400
         
         if not validate_ticket_number(form_data['ticket']):
-            flash('Invalid ticket number format. Use SVR followed by numbers.', 'error')
-            return redirect(url_for('index'))
+            return jsonify({
+                'success': False,
+                'error': 'Invalid ticket number format. Use SVR followed by numbers.'
+            }), 400
         
         # Log request details
-        logging.info(f"Processing upload for ticket: {form_data['ticket']}")
+        logging.info(f"Processing upload for ticket: {form_data['ticket']} (overwrite: {overwrite_confirmed})")
         logging.info(f"Technology: {form_data['technology']}")
         logging.info(f"File: {file_obj.filename}")
+        logging.info(f"File size: {file_obj.content_length if hasattr(file_obj, 'content_length') else 'Unknown'}")
         
         # Save file immediately and start background processing
         ticket_folder = os.path.join(UPLOAD_FOLDER, form_data['ticket'])
         os.makedirs(ticket_folder, exist_ok=True)
         file_path = os.path.join(ticket_folder, f"{form_data['ticket']}.zip")
         
-        # Save file (this is the only potentially slow operation)
+        # Save file (this is the only potentially blocking operation)
         file_obj.save(file_path)
         logging.info(f"File saved: {file_path}")
         
-        # Submit to thread pool for concurrent processing
-        future = executor.submit(async_process_upload, form_data, file_path, UPLOAD_FOLDER)
+        # Submit to thread pool for concurrent processing (non-blocking)
+        future = executor.submit(async_process_upload, form_data, file_path, UPLOAD_FOLDER, overwrite_confirmed)
         active_threads = threading.active_count()
         logging.info(f"[CONCURRENT] Task submitted to thread pool. Active threads: {active_threads}")
         
-        # Return success immediately
-        flash(f'Upload successful for ticket {form_data["ticket"]}! Processing started in background (concurrent mode).', 'success')
-        return redirect(url_for('index'))
+        # Return success immediately - don't wait for processing
+        message = f'Upload successful for ticket {form_data["ticket"]}! Processing started in background.'
+        if overwrite_confirmed:
+            message += ' (Overwrite mode)'
+        
+        return jsonify({
+            'success': True,
+            'message': message,
+            'ticket': form_data['ticket'],
+            'overwrite_mode': overwrite_confirmed,
+            'processing_started': True
+        })
         
     except Exception as e:
         error_msg = f"Upload error: {str(e)}"
         logging.error(error_msg)
         logging.exception("Full traceback for upload error:")
-        flash('Upload failed. Please try again.', 'error')
-        return redirect(url_for('index'))
-
-@app.route('/debug')
-def debug():
-    """Enhanced debug information with thread pool stats"""
-    logging.info("Debug route accessed")
-    
-    try:
-        # Get thread pool statistics
-        executor_info = {
-            'max_workers': executor._max_workers,
-            'active_threads': threading.active_count(),
-            'pool_shutdown': executor._shutdown,
-            'concurrent_processing_enabled': True
-        }
-        
-        debug_info = {
-            'base_directory': BASE_DIR,
-            'project_root': PROJECT_ROOT,
-            'upload_folder': UPLOAD_FOLDER,
-            'upload_folder_exists': os.path.exists(UPLOAD_FOLDER),
-            'current_directory': os.getcwd(),
-            'python_path_count': len(sys.path),
-            'thread_pool_info': executor_info,
-            'flask_config': dict(app.config),
-            'request_info': {
-                'remote_addr': request.remote_addr if request else 'No request context',
-                'user_agent': str(request.user_agent) if request else 'No request context'
-            }
-        }
-        
-        logging.info("Debug information compiled successfully")
-        
-        critical_paths = [BASE_DIR, PROJECT_ROOT, UPLOAD_FOLDER]
-        missing_paths = [path for path in critical_paths if not os.path.exists(path)]
-        
-        if missing_paths:
-            logging.warning(f"Missing critical paths: {missing_paths}")
-            debug_info['missing_paths'] = missing_paths
-        
-        return f"<pre>{json.dumps(debug_info, indent=2, default=str)}</pre>"
-        
-    except Exception as e:
-        error_msg = f"Error in debug route: {str(e)}"
-        logging.error(error_msg)
-        logging.exception("Full traceback for debug route error:")
-        return f"<pre>Debug Error: {error_msg}</pre>"
+        return jsonify({
+            'success': False,
+            'error': 'Upload failed. Please try again.'
+        }), 500
 
 @app.route('/download/<ticket_number>')
 def download_report(ticket_number):
@@ -248,26 +301,30 @@ def download_report(ticket_number):
 
 @app.route('/check_status/<ticket_number>')
 def check_status(ticket_number):
-    """Enhanced status checking with concurrent processing info"""
+    """Check processing status for a ticket"""
     logging.info(f"Status check for ticket: {ticket_number}")
     
     try:
         if not validate_ticket_number(ticket_number):
             return {'status': 'error', 'message': 'Invalid ticket format'}
         
-        ticket_folder = os.path.join(UPLOAD_FOLDER, ticket_number)
-        zip_file = os.path.join(ticket_folder, f"{ticket_number}.zip")
-        excel_file = os.path.join(ticket_folder, f"{ticket_number}_analysis.xlsx")
-        metadata_file = os.path.join(ticket_folder, 'metadata.json')
+        existing_status = check_existing_ticket(ticket_number)
         
         status_info = {
-            'ticket_exists': os.path.exists(ticket_folder),
-            'uploaded': os.path.exists(zip_file),
-            'processing_complete': os.path.exists(excel_file),
-            'download_ready': os.path.exists(excel_file),
+            'ticket_exists': existing_status['folder_exists'],
+            'uploaded': existing_status['zip_exists'],
+            'processing_complete': existing_status['excel_exists'],
+            'download_ready': existing_status['excel_exists'],
             'concurrent_processing': True,
-            'max_concurrent_uploads': executor._max_workers
+            'max_concurrent_uploads': executor._max_workers,
+            'ticket': ticket_number
         }
+        
+        # Add file info if available
+        if existing_status.get('excel_size'):
+            status_info['excel_size'] = existing_status['excel_size']
+        if existing_status.get('excel_modified'):
+            status_info['excel_modified'] = existing_status['excel_modified']
         
         # Determine overall status
         if status_info['download_ready']:
@@ -281,11 +338,11 @@ def check_status(ticket_number):
             status_info['message'] = 'Ticket not found.'
         
         logging.debug(f"Status for {ticket_number}: {status_info}")
-        return status_info
+        return jsonify(status_info)
         
     except Exception as e:
         logging.error(f"Error checking status for {ticket_number}: {str(e)}")
-        return {'status': 'error', 'message': str(e)}
+        return jsonify({'status': 'error', 'message': str(e)})
 
 @app.route('/stats')
 def processing_stats():
@@ -296,11 +353,70 @@ def processing_stats():
             'active_threads': threading.active_count(),
             'pool_shutdown': executor._shutdown,
             'concurrent_processing_enabled': True,
-            'thread_pool_class': 'ThreadPoolExecutor'
+            'thread_pool_class': 'ThreadPoolExecutor',
+            'upload_folder': UPLOAD_FOLDER,
+            'upload_folder_exists': os.path.exists(UPLOAD_FOLDER),
+            'current_time': datetime.datetime.now().isoformat(),
+            'system_info': {
+                'platform': os.name,
+                'python_version': sys.version.split()[0]
+            }
         }
-        return f"<pre>{json.dumps(stats, indent=2)}</pre>"
+        return jsonify(stats)
     except Exception as e:
-        return f"<pre>Stats Error: {str(e)}</pre>"
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/debug')
+def debug():
+    """Enhanced debug information with system details"""
+    logging.info("Debug route accessed")
+    
+    try:
+        # Get thread pool statistics
+        executor_info = {
+            'max_workers': executor._max_workers,
+            'active_threads': threading.active_count(),
+            'pool_shutdown': executor._shutdown,
+            'concurrent_processing_enabled': True
+        }
+        
+        debug_info = {
+            'base_directory': BASE_DIR,
+            'project_root': PROJECT_ROOT,
+            'upload_folder': UPLOAD_FOLDER,
+            'upload_folder_exists': os.path.exists(UPLOAD_FOLDER),
+            'current_directory': os.getcwd(),
+            'python_path_count': len(sys.path),
+            'thread_pool_info': executor_info,
+            'flask_config': dict(app.config),
+            'environment': {
+                'platform': os.name,
+                'python_version': sys.version,
+                'flask_version': getattr(__import__('flask'), '__version__', 'Unknown')
+            },
+            'request_info': {
+                'remote_addr': request.remote_addr if request else 'No request context',
+                'user_agent': str(request.user_agent) if request else 'No request context'
+            },
+            'timestamp': datetime.datetime.now().isoformat()
+        }
+        
+        logging.info("Debug information compiled successfully")
+        
+        critical_paths = [BASE_DIR, PROJECT_ROOT, UPLOAD_FOLDER]
+        missing_paths = [path for path in critical_paths if not os.path.exists(path)]
+        
+        if missing_paths:
+            logging.warning(f"Missing critical paths: {missing_paths}")
+            debug_info['missing_paths'] = missing_paths
+        
+        return f"<pre>{json.dumps(debug_info, indent=2, default=str)}</pre>"
+        
+    except Exception as e:
+        error_msg = f"Error in debug route: {str(e)}"
+        logging.error(error_msg)
+        logging.exception("Full traceback for debug route error:")
+        return f"<pre>Debug Error: {error_msg}</pre>"
 
 @app.route('/reset')
 def reset_form():
@@ -308,10 +424,32 @@ def reset_form():
     logging.info("Form reset requested")
     return redirect(url_for('index'))
 
+@app.route('/health')
+def health_check():
+    """Health check endpoint for monitoring"""
+    try:
+        health_status = {
+            'status': 'healthy',
+            'timestamp': datetime.datetime.now().isoformat(),
+            'upload_folder_accessible': os.path.exists(UPLOAD_FOLDER) and os.access(UPLOAD_FOLDER, os.W_OK),
+            'thread_pool_active': not executor._shutdown,
+            'active_threads': threading.active_count(),
+            'version': '1.0.0'
+        }
+        return jsonify(health_status)
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.datetime.now().isoformat()
+        }), 500
+
 @app.errorhandler(404)
 def not_found_error(error):
     """Handle 404 errors"""
     logging.warning(f"404 Error: {request.url} not found")
+    if request.is_json or request.path.startswith('/api/'):
+        return jsonify({'error': 'Endpoint not found'}), 404
     flash('Page not found', 'error')
     return redirect(url_for('index'))
 
@@ -320,7 +458,18 @@ def internal_error(error):
     """Handle 500 errors"""
     logging.error(f"500 Internal Server Error: {str(error)}")
     logging.exception("Full traceback for 500 error:")
+    if request.is_json or request.path.startswith('/api/'):
+        return jsonify({'error': 'Internal server error'}), 500
     flash('An internal server error occurred', 'error')
+    return redirect(url_for('index'))
+
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    """Handle file too large errors"""
+    logging.warning(f"File too large error: {str(error)}")
+    if request.is_json or request.path.startswith('/api/'):
+        return jsonify({'error': 'File too large'}), 413
+    flash('File is too large. Please upload a smaller file.', 'error')
     return redirect(url_for('index'))
 
 # Cleanup thread pool on app shutdown
@@ -336,6 +485,7 @@ if __name__ == '__main__':
     logging.info("=== Flask Application Startup ===")
     
     try:
+        # Ensure upload folder exists
         if not os.path.exists(UPLOAD_FOLDER):
             os.makedirs(UPLOAD_FOLDER, exist_ok=True)
             logging.info(f"Created upload folder: {UPLOAD_FOLDER}")
@@ -348,6 +498,7 @@ if __name__ == '__main__':
         print(f"Upload folder: {UPLOAD_FOLDER}")
         print(f"Upload folder exists: {os.path.exists(UPLOAD_FOLDER)}")
         
+        # Get local IP
         try:
             local_ip = socket.gethostbyname(socket.gethostname())
             logging.info(f"Local IP detected: {local_ip}")
@@ -355,30 +506,37 @@ if __name__ == '__main__':
             local_ip = 'localhost'
             logging.warning(f"Could not detect local IP, using localhost: {str(ip_error)}")
 
+        # Startup information
         logging.info("Starting Flask development server...")
-        print(f"Flask app running at: http://{local_ip}:5000")
-        print(f"Debug info available at: http://{local_ip}:5000/debug")
-        print(f"Processing stats: http://{local_ip}:5000/stats")
-        print(f"Download reports at: http://{local_ip}:5000/download/<ticket_number>")
-        print(f"Check status at: http://{local_ip}:5000/check_status/<ticket_number>")
-        print(f"Concurrent processing enabled: {executor._max_workers} workers")
+        print(f"\n🚀 Flask Upload System Starting...")
+        print(f"📍 Server: http://{local_ip}:5000")
+        print(f"🔍 Debug: http://{local_ip}:5000/debug")
+        print(f"📊 Stats: http://{local_ip}:5000/stats")
+        print(f"❤️  Health: http://{local_ip}:5000/health")
+        print(f"📥 Downloads: http://{local_ip}:5000/download/<ticket_number>")
+        print(f"📋 Status: http://{local_ip}:5000/check_status/<ticket_number>")
+        print(f"⚡ Concurrent processing: {executor._max_workers} workers")
+        print(f"🎯 Non-blocking uploads: ENABLED")
+        print("=" * 60)
         
         logging.info(f"Flask server starting on {local_ip}:5000")
         logging.info("Debug mode: True")
         logging.info(f"Concurrent processing: {executor._max_workers} workers")
+        logging.info("Non-blocking upload mode: ENABLED")
         
-        app.run(host='0.0.0.0', port=5000, debug=True)
+        # Start Flask app
+        app.run(host='0.0.0.0', port=5000, debug=True, threaded=True)
         
     except KeyboardInterrupt:
         logging.info("Flask application stopped by user (Ctrl+C)")
-        print("\nShutting down Flask application...")
+        print("\n🛑 Shutting down Flask application...")
         cleanup_executor()
         
     except Exception as e:
         error_msg = f"Failed to start Flask app: {str(e)}"
         logging.critical(error_msg)
         logging.exception("Full traceback for Flask startup error:")
-        print(error_msg)
+        print(f"❌ {error_msg}")
         raise
         
     finally:
