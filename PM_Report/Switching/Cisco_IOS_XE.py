@@ -380,7 +380,7 @@ def get_debug_status(log_data):
                 return "Command not found."
         else:
             logging.debug("No debug command found in log data.")
-            return "Command not found in logs."
+            return "Command not found"
     except Exception as e:
         logging.error(f"Error in get_debug_status: {str(e)}")
         return f"Error in get_debug_status: {str(e)}"
@@ -726,10 +726,10 @@ def process_directory(directory_path):
 
 def main():
     try:
-        file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR135977300\DRC01CORESW01_10.20.253.5.txt"
-        directory_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200"
-        # pp.pprint(process_file(file_path))
-        pp.pprint(process_directory(directory_path))
+        file_path = r""
+        with open(file_path, 'r') as file:
+            data = file.read()
+        get_power_supply_status(data)
     except Exception as e:
         print(f"Error in main: {str(e)}")
 

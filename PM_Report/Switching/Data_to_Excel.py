@@ -115,7 +115,6 @@ def unique_model_numbers_and_serials(data_list):
         return []
 
 def process_and_style_excel(file_path):
-    # Load Excel file
     try:
         df = pd.read_excel(file_path, engine='openpyxl', keep_default_na=False, na_values=[])
         logging.info("Excel file loaded successfully.")
@@ -143,13 +142,16 @@ def process_and_style_excel(file_path):
                 return "Consider to power cycle the device at the nearest maintenance window"
         except Exception as e:
             logging.warning(f"Error in uptime: {e}")
+        return None
 
     def simple_check(row, index, trigger, message):
         try:
-            if row.iloc[index] == trigger:
+            value = str(row.iloc[index]).strip()
+            if value == trigger:
                 return message
         except Exception as e:
             logging.warning(f"Error in check at index {index}: {e}")
+        return None
 
     def threshold_check(row, index, threshold, message):
         try:
@@ -157,6 +159,34 @@ def process_and_style_excel(file_path):
                 return message
         except Exception as e:
             logging.warning(f"Error in threshold check at index {index}: {e}")
+        return None
+
+    def psu_check(row):
+        try:
+            value = str(row.iloc[25]).strip()
+            if value != "OK":
+                return "PSU functionalities are abnormal, try to reseat the PSU and verify the status."
+        except Exception as e:
+            logging.warning(f"Error in PSU check: {e}")
+        return None
+
+    def fan_check(row):
+        try:
+            value = str(row.iloc[23]).strip()
+            if value != "OK":
+                return "Error noticed in fan functionality, kindly review."
+        except Exception as e:
+            logging.warning(f"Error in fan check: {e}")
+        return None
+
+    def temperature_check(row):
+        try:
+            value = str(row.iloc[24]).strip()
+            if value != "OK":
+                return "Abnormalities noticed in device temperature, suggested to check the fan status and also room temperature if required."
+        except Exception as e:
+            logging.warning(f"Error in temperature check: {e}")
+        return None
 
     def hardware_recommendations(row):
         try:
@@ -166,8 +196,10 @@ def process_and_style_excel(file_path):
             for i in range(27, 32):
                 try:
                     date = parser.parse(str(row.iloc[i]), fuzzy=True)
-                    has_passed |= date < today
-                    is_approaching |= today <= date <= one_year_later
+                    if date < today:
+                        has_passed = True
+                    elif today <= date <= one_year_later:
+                        is_approaching = True
                 except (ValueError, TypeError):
                     continue
             if has_passed and is_approaching:
@@ -178,23 +210,42 @@ def process_and_style_excel(file_path):
                 return "Device is approaching the EOS soon, please consider a hardware refresh."
         except Exception as e:
             logging.warning(f"Error in hardware_recommendations: {e}")
+        return None
 
-    functions = [
-        uptime,
-        lambda r: simple_check(r, 13, "YES", "The debug is enabled, please review the debug configurations and disable it as needed."),
-        lambda r: threshold_check(r, 18, 0.8, "Memory utilization is found to be high, please review top processes consuming more memory."),
-        lambda r: threshold_check(r, 22, 0.8, "Flash memory utilization is observed to be high, kindly review the top processes or files contributing to elevated flash usage."),
-        lambda r: simple_check(r, 25, "OK", None) or "PSU functionalities are abnormal, try to reseat the PSU and verify the status.",
-        lambda r: simple_check(r, 24, "OK", None) or "Error noticed in fan functionality, kindly review.",
-        lambda r: simple_check(r, 24, "OK", None) or "Abnormalities noticed in device temperature, suggested to check the fan status and also room temperature if required.",
-        hardware_recommendations,
-        lambda r: simple_check(r, 32, "YES", "Enable full duplex mode on all applicable interfaces to prevent performance issues."),
-        lambda r: simple_check(r, 34, "YES", "Unsaved configuration detected, recommended to save configurations to prevent loss during reboot."),
-        lambda r: simple_check(r, 36, "YES", "Critical logs found in the device, please review.")
-    ]
+    def duplex_check(row):
+        return simple_check(row, 32, "YES", "Enable full duplex mode on all applicable interfaces to prevent performance issues.")
+
+    def config_check(row):
+        return simple_check(row, 34, "YES", "Unsaved configuration detected, recommended to save configurations to prevent loss during reboot.")
+
+    def logs_check(row):
+        return simple_check(row, 36, "YES", "Critical logs found in the device, please review.")
+
+    def debug_check(row):
+        return simple_check(row, 13, "YES", "The debug is enabled, please review the debug configurations and disable it as needed.")
+
+    def memory_check(row):
+        return threshold_check(row, 18, 0.8, "Memory utilization is found to be high, please review top processes consuming more memory.")
+
+    def flash_check(row):
+        return threshold_check(row, 22, 0.8, "Flash memory utilization is observed to be high, kindly review the top processes or files contributing to elevated flash usage.")
 
     def generate_comment(row):
-        comments = [func(row) for func in functions if func(row)]
+        comments = []
+        for func in [
+            uptime, debug_check, memory_check, flash_check,
+            psu_check, fan_check, temperature_check,
+            hardware_recommendations, duplex_check,
+            config_check, logs_check
+        ]:
+            try:
+                result = func(row)
+                if result:
+                    comments.append(result)
+            except Exception as e:
+                logging.warning(f"Error executing function: {e}")
+        if not comments:
+            return "Device operating with good parameters."
         return "\n".join(comments)
 
     try:
@@ -232,7 +283,7 @@ def process_and_style_excel(file_path):
             for row in sheet.iter_rows(min_row=2):
                 for cell in row:
                     if isinstance(cell.value, str) and cell.value.strip() in [
-                        "Unavailable", "Invalid inner data format", "Invalid data format", "Check manually", "Require Manual Check", "Yet to check"
+                        "Unavailable", "Invalid inner data format", "Invalid data format", "Check manually", "Require Manual Check", "Yet to check", "Command not found"
                     ] or (isinstance(cell.value, str) and cell.value.startswith("Error:")):
                         cell.fill = red_fill
                     cell.alignment = center_wrap_align
@@ -256,16 +307,3 @@ def process_and_style_excel(file_path):
     except Exception as e:
         logging.error(f"Post-processing failed: {e}")
         raise
-    
-def main():
-    try:
-        file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR135977300\DRC01CORESW01_10.20.253.5.txt"
-        directory_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200"
-        # pp.pprint(Cisco_IOS_XE.process_file(file_path))
-        data = Cisco_IOS_XE.process_directory(directory_path)
-        print(append_to_excel("SVR3456789", data))
-    except Exception as e:
-        print(f"Error in main: {str(e)}")
-
-if __name__ == "__main__":
-    main()
