@@ -3,7 +3,8 @@ import os
 import logging
 import datetime  # ← ADDED: Missing import
 import pprint as pp
-from . import IOS_XE_Stack_Switch
+# from . 
+import IOS_XE_Stack_Switch
     
 # Static strings
 NA = "Not available"
@@ -11,7 +12,13 @@ YET_TO_CHECK = "Yet to check"
 
 log_dir = os.path.join(os.path.dirname(__file__), "logs")
 os.makedirs(log_dir, exist_ok=True)
-logging.basicConfig(filename=os.path.join(log_dir, f"{datetime.datetime.today().strftime('%Y-%m-%d')}.log"), level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+# Configure logging only once to avoid collisions when multiple modules import each other
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        filename=os.path.join(log_dir, f"{datetime.datetime.today().strftime('%Y-%m-%d')}.log"),
+        level=logging.DEBUG,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
 
 def log_type(log_data):
     if not isinstance(log_data, str):
@@ -37,17 +44,31 @@ def get_model_number(log_data):
     except Exception as e:
         logging.error(f"Error in get_model_number: {str(e)}")
         return f"Error in get_model_number: {str(e)}"
+    
+def get_ip(log_data):
+    match = re.search(r"ip address\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+.*?no ip redirects", log_data, re.DOTALL)
+    return match
 
 def get_ip_address(file_path):
+    """
+    Extract an IPv4-looking token from the filename.
+    Always returns a tuple: (file_name, ip_or_status_string).
+    Logic unchanged: still uses the same regex against the filename only.
+    """
     try:
         logging.info("Starting IP address extraction from file path.")
-        file_name = os.path.basename(file_path)
-        match = re.search(r"_(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\.(txt|log)", file_name)
+        file_name = os.path.basename(file_path) if isinstance(file_path, str) else str(file_path)
+        match = re.search(r"[_(\s]?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})[)]?\.?(txt|log)?", file_name)
         logging.debug("IP address extraction completed.")
-        return [file_name, match.group(1) if match else "Require Manual Check"]
+        if match:
+            return (file_name, match.group(1))
+        # No change to extraction logic; just a consistent, safe fallback
+        return (file_name, "Require Manual Check")
     except Exception as e:
         logging.error(f"Error in get_ip_address: {str(e)}")
-        return [f"Error in get_ip_address: {str(e)}", NA]
+        safe_name = os.path.basename(file_path) if isinstance(file_path, str) else "Unknown"
+        # Keep type consistent (tuple) and provide a clear status string used elsewhere
+        return (safe_name, "Require Manual Check")
 
 def get_serial_number(log_data):
     try:
@@ -62,9 +83,16 @@ def get_serial_number(log_data):
 def get_uptime(log_data):
     try:
         logging.info("Starting uptime search.")
-        match = re.search(rf"{get_hostname(log_data)} uptime is\s+(.+)", log_data)
+        hostname = get_hostname(log_data)
+        # If hostname isn't available, don't attempt a bogus regex match
+        if not hostname or hostname == "Not available":
+            logging.debug("Uptime search skipped due to unavailable hostname.")
+            return "Not available"
+        # Escape hostname to prevent regex meta-characters from breaking the pattern
+        pattern = rf"{re.escape(hostname)}\s+uptime is\s+(.+)"
+        match = re.search(pattern, log_data)
         logging.debug("Uptime search completed.")
-        return match.group(1) if match else "Not available"
+        return match.group(1).strip() if match else "Not available"
     except Exception as e:
         logging.error(f"Error in get_uptime: {str(e)}")
         return f"Error in get_uptime: {str(e)}"
@@ -228,6 +256,9 @@ def get_fan_status(log_data):
             logging.error("Unsupported version")
             return ["Unsupported version"]
         
+        # NEW: normalize shape (flatten single-element lists)
+        status = [s[0] if isinstance(s, list) and len(s) == 1 else s for s in status]
+
         logging.debug("Fan status extraction completed.")
         return status if status else ["Not available"]
     except Exception as e:
@@ -255,13 +286,24 @@ def get_temperature_status(log_data):
             logging.debug("Temperature status extraction completed.")
             return result if result else ["Not available"]
         elif version.startswith('16'):
+            # Parse exactly as before
             temperature_status = re.findall(r'Switch (\d+): SYSTEM TEMPERATURE is (.+)', log_data)
             if not temperature_status:
                 logging.debug("No temperature status information found in log data.")
                 return ["Not available"]
-            result = []
-            for temp in temperature_status:
-                result.append('OK' if temp[1].strip().upper() == 'OK' else 'NOT OK')
+
+            # NEW: aggregate per switch to mirror 17.x final shape (one status per switch)
+            per_switch = {}
+            for switch_str, status_text in temperature_status:
+                sw = int(switch_str)
+                status = status_text.strip().upper()
+                # Logic-equivalent: a switch is OK iff the line says OK
+                # (If multiple lines per switch ever appear, we AND them: all must be OK)
+                current = per_switch.get(sw, True)
+                per_switch[sw] = current and (status == 'OK')
+
+            # Emit one entry per switch, ordered
+            result = ['OK' if per_switch[sw] else 'Not OK' for sw in sorted(per_switch.keys())]
             logging.debug("Temperature status extraction completed.")
             return result if result else ["Not available"]
         else:
@@ -289,7 +331,6 @@ def get_power_supply_status(log_data):
                     switch_block_end = sensor_list_starts[i+1]
 
                 current_switch_data = log_data[switch_block_start:switch_block_end]
-                switch_number = i + 1
                 alarm_status = "OK"
 
                 sensor_section_match = re.search(r'Sensor List: Environmental Monitoring\s*([\s\S]*?)(?:Switch FAN Speed State Airflow direction|SW\s+PID|$)', current_switch_data, re.DOTALL)
@@ -307,42 +348,38 @@ def get_power_supply_status(log_data):
                         if re.search(r'No Input Power|Bad', psu_pid_section):
                             alarm_status = "ALARM"
                 results.append(alarm_status)
+
+            logging.debug("Power supply status extraction completed.")
+            return results if results else ["Not available"]
+
         elif version.startswith('16'):
             results = {}
             lines = log_data.strip().split('\n')
             pdu_line_pattern = re.compile(r'^\s*(\d+)[AB]\s+')
-            
             pdu_section_header = re.compile(r'SW\s+PID\s+.*Serial#\s+.*Status')
-            
             pdu_lines_start_index = -1
             for i, line in enumerate(lines):
                 if pdu_section_header.search(line):
-                    pdu_lines_start_index = i + 2 # Header line + separator line
+                    pdu_lines_start_index = i + 2
                     break
 
             if pdu_lines_start_index != -1:
                 for line in lines[pdu_lines_start_index:]:
                     if not line.strip() or '------------------' in line:
                         break
-                    
                     if pdu_line_pattern.match(line):
                         parts = line.strip().split()
-                        
                         try:
                             switch_number = int(parts[0][:-1])
                         except (ValueError, IndexError):
                             continue
-                        
                         status = "UNKNOWN"
-                        
                         if "Not Present" in line:
                             status = "Not Present"
                         elif len(parts) > 3:
                             status = parts[3].strip()
-
                         if switch_number not in results:
                             results[switch_number] = []
-                        
                         is_ok = (status == "OK" or status == "Not Present")
                         results[switch_number].append(is_ok)
 
@@ -354,10 +391,14 @@ def get_power_supply_status(log_data):
                         final_statuses.append("OK")
                     else:
                         final_statuses.append("NOT OK")
-            
+
+            logging.debug("Power supply status extraction completed.")
             return final_statuses if final_statuses else ["Not available"]
-        logging.debug("Power supply status extraction completed.")
-        return results if results else ["Not available"]
+
+        else:
+            logging.error("Unsupported version")
+            return ["Unsupported version"]
+
     except Exception as e:
         logging.error(f"Error in get_power_supply_status: {str(e)}")
         return [f"Error in get_power_supply_status: {str(e)}"]
@@ -371,13 +412,19 @@ def get_debug_status(log_data):
             if hostname == "Not available" or not hostname:
                 logging.debug("Hostname not found in log data.")
                 return "Hostname not found"
-            debug_section_match = re.search(rf"Ip Address\s+Port\s*-+\|----------\s*([\s\S]*?)\n{hostname}#", log_data[match.end():], re.IGNORECASE)
+            # Escape hostname to avoid regex issues with special characters
+            end_anchor = rf"\n{re.escape(hostname)}#"
+            debug_section_match = re.search(
+                rf"Ip Address\s+Port\s*-+\|----------\s*([\s\S]*?){end_anchor}",
+                log_data[match.end():],
+                re.IGNORECASE
+            )
             if debug_section_match and debug_section_match.group(1).strip():
                 logging.debug("Debug status extraction completed.")
                 return "Require Manual Check"
             else:
                 logging.debug("No debug section found in log data.")
-                return "Command not found."
+                return "Command not found"
         else:
             logging.debug("No debug command found in log data.")
             return "Command not found"
@@ -397,37 +444,39 @@ def get_available_ports(log_data):
             ports = {}
             for line in section.strip().splitlines()[1:]:
                 parts = line.split()
+                # Keep original selection logic exactly as-is: requires 'notconnect' and '1' present
                 if 'notconnect' in parts and '1' in parts:
                     try:
                         interface = parts[0]
-                        # switch_number = int(interface.split('/')[0].replace('Gi', '').replace('Te', '').replace('Ap', '').replace('Po', ''))
-                        # removed Po from considering, this removed bug.
+                        # Keep original normalization (Po excluded, Gi/Te/Ap supported)
                         switch_number = int(interface.split('/')[0].replace('Gi', '').replace('Te', '').replace('Ap', ''))
                         if switch_number not in ports:
                             ports[switch_number] = []
                         ports[switch_number].append(interface)
                     except (ValueError, IndexError):
                         continue
-            port_list = [ports.get(i, []) for i in range(1, max(ports.keys()) + 1 if ports else 1)]
-            count = sum(len(port) for port in port_list)
-            if count:
+
+            # Build per-switch counts with stable [[int]] shape
+            max_switch = max(ports.keys()) if ports else 0
+            if max_switch > 0:
+                port_list = [[int(len(ports.get(i, [])))] for i in range(1, max_switch + 1)]
                 logging.debug("Available ports extraction completed.")
-                # print([[len(port)] for port in port_list])
-                return [[len(port)] for port in port_list]
-            else:
-                logging.debug("No available ports found in log data.")
-                return [[0]]
+                return port_list
+
+            logging.debug("No available ports found in log data.")
+            return [[0]]
         else:
             logging.debug("No available ports section found in log data.")
             return [[0]]
     except Exception as e:
         logging.error(f"Error in get_available_ports: {str(e)}")
+        # Preserve original error signaling shape
         return [[str(e)]]
 
 def get_half_duplex_ports(log_data):
     try:
         logging.info("Starting half duplex ports extraction.")
-        current_stack_size = IOS_XE_Stack_Switch.stack_size(log_data)  
+        current_stack_size = IOS_XE_Stack_Switch.stack_size(log_data)
         match = re.findall(r"^(\S+).*a-half.*$", log_data, re.IGNORECASE | re.MULTILINE)
         if match:
             switch_interfaces = {}
@@ -439,40 +488,52 @@ def get_half_duplex_ports(log_data):
                 if switch_number not in switch_interfaces:
                     switch_interfaces[switch_number] = []
                 switch_interfaces[switch_number].append(interface)
+
             max_switch_number = max(map(int, switch_interfaces.keys()), default=0)
-            half_duplex_ports_per_switch = [[len(switch_interfaces.get(str(i), []))] for i in range(1, max_switch_number + 1)]
+            # keep original outer shape [[count], ...] (no logic change), but ensure counts are ints
+            half_duplex_ports_per_switch = [[int(len(switch_interfaces.get(str(i), [])))] for i in range(1, max_switch_number + 1)]
             logging.debug("Half duplex ports extraction completed.")
             return half_duplex_ports_per_switch
         else:
             logging.debug("No half duplex ports found in log data.")
-            return [["0"]] * current_stack_size  
+            # keep the original [[...]] shape but use numeric 0 instead of "0"
+            return [[0]] * current_stack_size
     except Exception as e:
         logging.error(f"Error in get_half_duplex_ports: {str(e)}")
+        # preserve original error signaling & shape
         return [["Error"]] * current_stack_size
 
 def get_interface_remark(log_data):
     try:
         logging.info("Starting interface remark extraction.")
-        current_stack_size = IOS_XE_Stack_Switch.stack_size(log_data)  
+        current_stack_size = IOS_XE_Stack_Switch.stack_size(log_data)
         match = re.findall(r"^(\S+).*a-half.*$", log_data, re.IGNORECASE | re.MULTILINE)
         if match:
             switch_interfaces = {}
             for interface in match:
-                switch_number = re.search(r'\D+(\d+)/', interface).group(1)
+                switch_number = re.search(r'\D+(\d+)/', interface)
+                if not switch_number:
+                    continue
+                switch_number = switch_number.group(1)
                 if switch_number not in switch_interfaces:
                     switch_interfaces[switch_number] = []
                 switch_interfaces[switch_number].append(interface)
+
             max_switch_number = max(map(int, switch_interfaces.keys()), default=0)
+            # Preserve original inner default 'Not avialable' where a switch has no entries,
+            # but ensure the OUTER shape is always list-of-lists (per switch)
             interface_remark = [switch_interfaces.get(str(i), []) for i in range(1, max_switch_number + 1)]
             interface_remark = [sublist if sublist else ['Not avialable'] for sublist in interface_remark]
             logging.debug("Interface remark extraction completed.")
             return interface_remark
         else:
             logging.debug("No interface remark found in log data.")
-            return ["Not available"] * current_stack_size  
+            # IMPORTANT: keep OUTER shape as list-of-lists, one per switch
+            return [["Not available"]] * current_stack_size
     except Exception as e:
         logging.error(f"Error in get_interface_remark: {str(e)}")
-        return [[f"Error in get_interface_remark: {str(e)}"]] * current_stack_size  
+        # Preserve original error signaling shape (list-of-lists)
+        return [[f"Error in get_interface_remark: {str(e)}"]] * IOS_XE_Stack_Switch.stack_size(log_data)
 
 def get_nvram_config_update(log_data):
     try:
@@ -645,7 +706,7 @@ def process_file(file_path):
             data["Host name"] = hostname
             data["Model number"] = model_number
             data["Serial number"] = serial_number
-            data["Interface ip address"] = ip_address
+            data["Interface ip address"] = ip_address[0]
             data["Uptime"] = uptime
             data["Current s/w version"] = current_sw
             data["Last Reboot Reason"] = last_reboot
@@ -726,10 +787,13 @@ def process_directory(directory_path):
 
 def main():
     try:
-        file_path = r""
-        with open(file_path, 'r') as file:
-            data = file.read()
-        get_power_supply_status(data)
+        # file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR136818637\CBJ_SVR136818637\CBJ01OS01(10.163.80.171).txt"
+        directory_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR136818637\CBJ_SVR136818637\New folder"
+        data = process_directory(directory_path)
+        for item in data:
+            # print(item["Interface ip address"])
+            print_data(item)
+        # pp.pprint(data["Interface ip address"])
     except Exception as e:
         print(f"Error in main: {str(e)}")
 

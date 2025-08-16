@@ -5,7 +5,13 @@ import datetime
 
 log_dir = os.path.join(os.path.dirname(__file__), "logs")
 os.makedirs(log_dir, exist_ok=True)
-logging.basicConfig(filename=os.path.join(log_dir, f"{datetime.datetime.today().strftime('%Y-%m-%d')}.log"), level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+# Configure logging only once to avoid collisions when imported alongside Cisco_IOS_XE
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        filename=os.path.join(log_dir, f"{datetime.datetime.today().strftime('%Y-%m-%d')}.log"),
+        level=logging.DEBUG,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
 
 def serial_number(data):
     """Extract serial number from the provided data"""

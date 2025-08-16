@@ -1,7 +1,8 @@
 import os
 import pandas as pd
 import logging
-from . import Cisco_IOS_XE
+# from . 
+import Cisco_IOS_XE
 import re
 from datetime import datetime, timedelta
 from dateutil import parser
@@ -122,10 +123,43 @@ def process_and_style_excel(file_path):
         logging.error(f"Failed to load Excel file: {e}")
         raise
 
+     # --- NEW: safe accessor so index-based lookups don't crash if layout changes ---
+    def _safe_iloc(row, idx, default=""):
+        try:
+            # pandas Series has .iloc and a length; if idx is valid, return the value
+            return row.iloc[idx] if 0 <= idx < len(row) else default
+        except Exception:
+            return default
+
+    # --- NEW: Coerce percentage-like strings to numeric fractions ---
+    # Keep column names aligned with your existing styling/threshold logic
+    percentage_columns = ["CPU Utilization", "Memory Utilization (%)", "Used Flash (%)"]
+
+    def _to_fraction(val):
+        try:
+            # Already numeric? If it's <= 1, assume it's already a fraction; if > 1 and not a % string, leave as-is
+            if isinstance(val, (int, float)):
+                return float(val) if val <= 1 else val
+            if isinstance(val, str):
+                s = val.strip()
+                # Match e.g. "83%", "83.00%", "  83.5 % "
+                m = re.match(r'^(\d+(?:\.\d+)?)\s*%$', s)
+                if m:
+                    return float(m.group(1)) / 100.0
+        except Exception as e:
+            logging.debug(f"Percentage coercion skipped for value '{val}': {e}")
+        return val
+
+    for col in percentage_columns:
+        if col in df.columns:
+            df[col] = df[col].apply(_to_fraction)
+    # --- END NEW BLOCK ---
+
     # Recommendation functions
     def uptime(row):
         try:
-            matches = re.findall(r'(\d+)\s+(year|week|day|hour|minute|second)s?', str(row.iloc[5]))
+            text = str(_safe_iloc(row, 5, ""))
+            matches = re.findall(r'(\d+)\s+(year|week|day|hour|minute|second)s?', text)
             time_dict = {unit: int(value) for value, unit in matches}
             if time_dict.get('year', 0) > 1 or (
                 time_dict.get('year', 0) == 1 and any(unit in time_dict for unit in ['week', 'day', 'hour', 'minute', 'second'])
@@ -146,7 +180,7 @@ def process_and_style_excel(file_path):
 
     def simple_check(row, index, trigger, message):
         try:
-            value = str(row.iloc[index]).strip()
+            value = str(_safe_iloc(row, index, "")).strip()
             if value == trigger:
                 return message
         except Exception as e:
@@ -155,7 +189,8 @@ def process_and_style_excel(file_path):
 
     def threshold_check(row, index, threshold, message):
         try:
-            if isinstance(row.iloc[index], (int, float)) and row.iloc[index] >= threshold:
+            val = _safe_iloc(row, index, None)
+            if isinstance(val, (int, float)) and val >= threshold:
                 return message
         except Exception as e:
             logging.warning(f"Error in threshold check at index {index}: {e}")
@@ -163,7 +198,7 @@ def process_and_style_excel(file_path):
 
     def psu_check(row):
         try:
-            value = str(row.iloc[25]).strip()
+            value = str(_safe_iloc(row, 25, "")).strip()
             if value != "OK":
                 return "PSU functionalities are abnormal, try to reseat the PSU and verify the status."
         except Exception as e:
@@ -172,7 +207,7 @@ def process_and_style_excel(file_path):
 
     def fan_check(row):
         try:
-            value = str(row.iloc[23]).strip()
+            value = str(_safe_iloc(row, 23, "")).strip()
             if value != "OK":
                 return "Error noticed in fan functionality, kindly review."
         except Exception as e:
@@ -181,7 +216,7 @@ def process_and_style_excel(file_path):
 
     def temperature_check(row):
         try:
-            value = str(row.iloc[24]).strip()
+            value = str(_safe_iloc(row, 24, "")).strip()
             if value != "OK":
                 return "Abnormalities noticed in device temperature, suggested to check the fan status and also room temperature if required."
         except Exception as e:
@@ -195,7 +230,7 @@ def process_and_style_excel(file_path):
             has_passed = is_approaching = False
             for i in range(27, 32):
                 try:
-                    date = parser.parse(str(row.iloc[i]), fuzzy=True)
+                    date = parser.parse(str(_safe_iloc(row, i, "")), fuzzy=True)
                     if date < today:
                         has_passed = True
                     elif today <= date <= one_year_later:
@@ -249,7 +284,12 @@ def process_and_style_excel(file_path):
         return "\n".join(comments)
 
     try:
-        df[df.columns[37]] = df.apply(generate_comment, axis=1)
+        remark_col = "Remark"
+        if remark_col not in df.columns:
+            # Create the column if missing
+            df[remark_col] = ""
+
+        df[remark_col] = df.apply(generate_comment, axis=1)
         df.to_excel(file_path, index=False, engine='openpyxl')
         logging.info("Excel file updated with recommendations.")
     except Exception as e:
@@ -282,9 +322,27 @@ def process_and_style_excel(file_path):
 
             for row in sheet.iter_rows(min_row=2):
                 for cell in row:
-                    if isinstance(cell.value, str) and cell.value.strip() in [
-                        "Unavailable", "Invalid inner data format", "Invalid data format", "Check manually", "Require Manual Check", "Yet to check", "Command not found"
-                    ] or (isinstance(cell.value, str) and cell.value.startswith("Error:")):
+                    val = cell.value
+                    mark_red = False
+                    if isinstance(val, str):
+                        s = val.strip()
+                        # Expanded variants & common typos, without changing upstream logic/strings
+                        red_markers = {
+                            "Unavailable",
+                            "Invalid inner data format",
+                            "Invalid data format",
+                            "Check manually",
+                            "Require Manual Check",
+                            "Yet to check",
+                            "Command not found",
+                            "Command not found.",      # trailing period variant
+                            "Not available",
+                            "NA",
+                            "Not avialable",          # common typo seen in remarks
+                        }
+                        if s in red_markers or s.startswith("Error:"):
+                            mark_red = True
+                    if mark_red:
                         cell.fill = red_fill
                     cell.alignment = center_wrap_align
 
@@ -307,3 +365,17 @@ def process_and_style_excel(file_path):
     except Exception as e:
         logging.error(f"Post-processing failed: {e}")
         raise
+
+def main():
+
+    try:
+        file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR135977300\DRC01CORESW01_10.20.253.5.txt"
+        directory_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR136818637\CBJ_SVR136818637\New folder"
+        # pp.pprint(Cisco_IOS_XE.process_file(file_path))
+        data = Cisco_IOS_XE.process_directory(directory_path)
+        print(append_to_excel("SVR3456789", data))
+    except Exception as e:
+        print(f"Error in main: {str(e)}")
+
+if __name__ == "__main__":
+    main()
