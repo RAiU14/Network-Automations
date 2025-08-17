@@ -754,7 +754,7 @@ def process_file(file_path):
             data["Host name"] = hostname
             data["Model number"] = model_number
             data["Serial number"] = serial_number
-            data["Interface ip address"] = ip_address[0]
+            data["Interface ip address"] = ip_address
             data["Uptime"] = uptime
             data["Current s/w version"] = current_sw
             data["Last Reboot Reason"] = last_reboot
