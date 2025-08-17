@@ -3,8 +3,7 @@ import os
 import logging
 import datetime  # ← ADDED: Missing import
 import pprint as pp
-# from . 
-import IOS_XE_Stack_Switch
+from . import IOS_XE_Stack_Switch
     
 # Static strings
 NA = "Not available"
@@ -46,29 +45,78 @@ def get_model_number(log_data):
         return f"Error in get_model_number: {str(e)}"
     
 def get_ip(log_data):
-    match = re.search(r"ip address\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+.*?no ip redirects", log_data, re.DOTALL)
-    return match
+    """
+    Return the first IPv4 found in an 'ip address' style line, or None.
+    (Kept simple; expand patterns later if needed.)
+    """
+    try:
+        m = re.search(r"\bip address\s+(\d{1,3}(?:\.\d{1,3}){3})\b", log_data, re.IGNORECASE)
+        if m and _is_valid_ipv4(m.group(1)):
+            return m.group(1)
+        # fallback: any IPv4-looking token in the file
+        any_ip = re.search(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", log_data)
+        if any_ip and _is_valid_ipv4(any_ip.group(1)):
+            return any_ip.group(1)
+        return None
+    except Exception:
+        return None
 
 def get_ip_address(file_path):
     """
-    Extract an IPv4-looking token from the filename.
-    Always returns a tuple: (file_name, ip_or_status_string).
-    Logic unchanged: still uses the same regex against the filename only.
+    Enhanced: strict IPv4 validation + content fallback.
+    Returns a tuple: (file_name, ip_or_status_string).
     """
     try:
         logging.info("Starting IP address extraction from file path.")
         file_name = os.path.basename(file_path) if isinstance(file_path, str) else str(file_path)
-        match = re.search(r"[_(\s]?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})[)]?\.?(txt|log)?", file_name)
-        logging.debug("IP address extraction completed.")
-        if match:
-            return (file_name, match.group(1))
-        # No change to extraction logic; just a consistent, safe fallback
+
+        # 1) Filename-first, but collect all candidates and pick the first VALID IPv4
+        #    (looser filename finder; strict validation is applied after)
+        filename_candidates = re.findall(r"(\d{1,3}(?:\.\d{1,3}){3})", file_name)
+        valid_from_name = _first_valid_ipv4(filename_candidates)
+        if valid_from_name:
+            logging.debug(f"IP found in filename: {valid_from_name}")
+            return (file_name, valid_from_name)
+
+        # 2) Content fallback (read only if needed)
+        try:
+            with open(file_path, "r", errors="ignore") as f:
+                log_data = f.read()
+            from_content = get_ip(log_data)  # uses strict validation internally
+            if from_content:
+                logging.debug(f"IP found in file content: {from_content}")
+                return (file_name, from_content)
+        except Exception as inner:
+            logging.warning(f"Content fallback failed while reading {file_name}: {inner}")
+
+        logging.debug("No valid IP found; manual check required.")
         return (file_name, "Require Manual Check")
+
     except Exception as e:
         logging.error(f"Error in get_ip_address: {str(e)}")
         safe_name = os.path.basename(file_path) if isinstance(file_path, str) else "Unknown"
-        # Keep type consistent (tuple) and provide a clear status string used elsewhere
         return (safe_name, "Require Manual Check")
+    
+def _is_valid_ipv4(addr: str) -> bool:
+    try:
+        parts = addr.split(".")
+        if len(parts) != 4:
+            return False
+        for p in parts:
+            if not p.isdigit():
+                return False
+            n = int(p)
+            if n < 0 or n > 255:
+                return False
+        return True
+    except Exception:
+        return False
+
+def _first_valid_ipv4(candidates):
+    for c in candidates:
+        if _is_valid_ipv4(c):
+            return c
+    return None
 
 def get_serial_number(log_data):
     try:
@@ -762,33 +810,132 @@ def process_directory(directory_path):
     if not isinstance(directory_path, str):
         logging.error("Invalid input type for directory_path")
         return 500
+
+    if not os.path.isdir(directory_path):
+        logging.error(f"Directory does not exist or is not a directory: {directory_path}")
+        return 500
+
     data = []
     try:
         logging.info(f"Starting directory processing: {directory_path}")
+
+        # Collect eligible files first (stable order)
+        candidates = []
         for filename in os.listdir(directory_path):
-            if filename.endswith('.txt') or filename.endswith('.log'):
-                file_path = os.path.join(directory_path, filename)
-                with open(file_path) as file:
-                    log_data = file.read()
-                ios_xe = ios_xe_check(log_data)
-                if ios_xe:
-                    logging.debug(f"{filename} is IOS XE File. Appending value!")
-                    switch_data = process_file(file_path)
-                    data.append(switch_data)
-                else:
-                    logging.debug(f"{filename} was not IOS XE. Discarding!")
-            else:
+            if not (filename.endswith('.txt') or filename.endswith('.log')):
                 logging.debug(f"Skipping non-log file: {filename}")
+                continue
+            if filename.startswith('~$') or filename.startswith('.'):
+                logging.debug(f"Skipping temp/hidden file: {filename}")
+                continue
+            candidates.append(os.path.join(directory_path, filename))
+
+        if not candidates:
+            logging.warning("No .txt or .log files found to process.")
+            return data  # empty list
+
+        def _process_one(file_path):
+            try:
+                # Read once to check IOS-XE eligibility (tolerate encoding issues)
+                with open(file_path, 'r', errors='ignore') as f:
+                    log_data = f.read()
+            except Exception as e:
+                logging.error(f"Unreadable file {file_path}: {e}")
+                # Return a placeholder row that will land in Excel with a clear Remark
+                return _placeholder_entry(file_path)
+
+            try:
+                if ios_xe_check(log_data):
+                    logging.debug(f"{os.path.basename(file_path)} is IOS XE File. Appending value!")
+                    return process_file(file_path)  # your original pipeline
+                else:
+                    logging.debug(f"{os.path.basename(file_path)} was not IOS XE. Producing info row.")
+                    return _placeholder_entry(file_path)
+            except Exception as e:
+                logging.error(f"Error processing {file_path}: {e}")
+                return _placeholder_entry(file_path)
+
+        # I/O-bound concurrency
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        max_workers = min(16, (os.cpu_count() or 4) * 2)
+        futures = []
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            for fp in candidates:
+                futures.append(ex.submit(_process_one, fp))
+            for fut in as_completed(futures):
+                try:
+                    result = fut.result()
+                    # Keep original behavior: only collect valid dicts
+                    if isinstance(result, dict) and result:
+                        data.append(result)
+                except Exception as e:
+                    logging.error(f"Worker future raised: {e}")
+
         logging.debug("Data Extracted Successfully!")
-        return data 
+        return data
+
     except Exception as e:
         logging.error(f"Error in process_directory: {str(e)}")
         return 500
+    
+def _placeholder_entry(file_path, reason_text="Non-IOS_XE"):
+    """
+    One-row data dict for files that were skipped or failed.
+    For Non-IOS-XE rows we fill ALL attributes with 'Unsupported IOS'.
+    """
+    import os
+    try:
+        fname, _ = get_ip_address(file_path)  # we will not show IP for unsupported rows
+    except Exception:
+        fname = os.path.basename(file_path)
+
+    U = "Unsupported IOS"
+
+    return {
+        "File name": [fname],
+        "Host name": [U],
+        "Model number": [U],
+        "Serial number": [U],
+        "Interface ip address": [U],
+        "Uptime": [U],
+        "Current s/w version": [U],
+        "Last Reboot Reason": [U],
+        "Any Debug?": [U],
+        "CPU Utilization": [U],
+        "Total memory": [U],
+        "Used memory": [U],
+        "Free memory": [U],
+        "Memory Utilization (%)": [U],
+        "Total flash memory": [U],
+        "Used flash memory": [U],
+        "Free flash memory": [U],
+        "Used Flash (%)": [U],
+        "Fan status": [U],
+        "Temperature status": [U],
+        "PowerSupply status": [U],
+        "Available Free Ports": [U],
+        "Any Half Duplex": [U],
+        "Interface/Module Remark": [U],
+        "Config Status": [U],
+        "Config Save Date": [U],
+        "Critical logs": [U],
+        "Current SW EOS": [U],
+        "Suggested s/w ver": [U],
+        "s/w release date": [U],
+        "Latest S/W version": [U],
+        "Production s/w is deffered or not?": [U],
+        "End-of-Sale Date: HW": [U],
+        "Last Date of Support: HW": [U],
+        "End of Routine Failure Analysis Date:  HW": [U],
+        "End of Vulnerability/Security Support: HW": [U],
+        "End of SW Maintenance Releases Date: HW": [U],
+        "Remark": ["Non-IOS_XE"],
+    }
 
 def main():
     try:
         # file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR136818637\CBJ_SVR136818637\CBJ01OS01(10.163.80.171).txt"
-        directory_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR136818637\CBJ_SVR136818637\New folder"
+        directory_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR136818637\CBJ_SVR136818637\New Folder"
         data = process_directory(directory_path)
         for item in data:
             # print(item["Interface ip address"])
