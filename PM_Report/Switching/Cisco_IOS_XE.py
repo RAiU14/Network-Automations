@@ -19,6 +19,91 @@ if not logging.getLogger().handlers:
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
 
+# Stanza splitter: grabs each "interface ..." block (multiline)
+_INTERFACE_BLOCK_RE = re.compile(r'(?ms)^interface\s+\S+.*?(?=^interface\s+\S+|\Z)')
+
+# Lines that usually accompany the management SVI
+_MGMT_MARKERS = (
+    r'no\s+ip\s+redirects',
+    r'no\s+ip\s+unreachables',
+    r'no\s+ip\s+proxy-arp',
+    r'no\s+ip\s+route-cache',
+)
+
+# IP line patterns inside a stanza (IOS/IOS-XE typical):
+# - "ip address 10.1.2.3 255.255.255.0"
+# - "ip address 10.1.2.3/24"
+# - may be followed by "secondary" (we ignore those and take the primary)
+_IP_LINE_RE = re.compile(
+    r'^\s*ip\s+address\s+'
+    r'(?P<ip>\d{1,3}(?:\.\d{1,3}){3})'
+    r'(?:\s+(?:\d{1,3}(?:\.\d{1,3}){3}|/\d{1,2}))?'
+    r'(?:\s+secondary)?\s*$',
+    re.IGNORECASE | re.MULTILINE
+)
+
+# Optional extra hints for a management interface
+_PREFER_NAME_RE = re.compile(r'(?im)^interface\s+(?:(?:vlan\d+)|(?:loopback0)|(?:bdi\d+))\b')
+_DESC_MGMT_RE   = re.compile(r'(?im)^\s*description\s+.*\b(mgmt|manage|management)\b')
+
+def _marker_score(block: str) -> int:
+    """Score a stanza by how many management-hardening markers it contains."""
+    s = 0
+    for pat in _MGMT_MARKERS:
+        if re.search(pat, block, flags=re.IGNORECASE):
+            s += 1
+    return s
+
+def _prefer_rank(block: str) -> int:
+    """
+    Lower is better.
+    0: SVI/Loopback/BDI with 'management' hint in description
+    1: SVI/Loopback/BDI without desc hint
+    2: Anything else with desc hint
+    3: Anything else
+    """
+    is_pref_if = bool(_PREFER_NAME_RE.search(block))
+    has_mgmt_desc = bool(_DESC_MGMT_RE.search(block))
+    if is_pref_if and has_mgmt_desc:
+        return 0
+    if is_pref_if:
+        return 1
+    if has_mgmt_desc:
+        return 2
+    return 3
+
+_IP_RE = re.compile(r'^\s*(\d+)\.(\d+)\.(\d+)\.(\d+)\s*$')
+
+def sanitize_ipv4(value: str) -> str:
+    """
+    Return a normalized IPv4 (no leading zeros, stripped), or:
+      - "Require Manual Check" if clearly malformed
+      - "Not available" if empty-ish
+    """
+    if value is None:
+        return "Not available"
+    s = str(value).strip()
+    if s == "" or s.lower() in {"n/a", "na", "not available", "unavailable"}:
+        return "Not available"
+
+    if "/" in s:
+        s = s.split("/", 1)[0].strip()
+    elif " " in s and _IP_RE.search(s.split(" ")[0] or ""):
+        s = s.split(" ", 1)[0].strip()
+
+    m = _IP_RE.match(s)
+    if not m:
+        return "Require Manual Check"
+
+    octets = [int(x) for x in m.groups()]
+    if any(o < 0 or o > 255 for o in octets):
+        return "Require Manual Check"
+
+    s_norm = ".".join(str(o) for o in octets)
+    if s_norm in {"0.0.0.0", "255.255.255.255"}:
+        return "Require Manual Check"
+    return s_norm
+
 def log_type(log_data):
     if not isinstance(log_data, str):
         logging.error("Invalid input type for log_data")
@@ -29,7 +114,7 @@ def get_hostname(log_data):
         logging.info("Starting hostname search.")
         match = re.search(r"hostname\s+(\S+)", log_data)
         logging.debug("Category Search Completed.")
-        return match.group(1) if match else NA
+        return match.group(1) if match else "Require Manual Check"
     except Exception as e:
         logging.debug("Category Search failed - hostname not found in log.")
         return f"Error in get_hostname: {str(e)}"
@@ -39,53 +124,117 @@ def get_model_number(log_data):
         logging.info("Starting model number search.")
         match = re.search(r"Model Number\s+:\s+(\S+)", log_data)
         logging.debug("Model number search completed.")
-        return match.group(1) if match else NA
+        return match.group(1) if match else "Require Manual Check"
     except Exception as e:
         logging.error(f"Error in get_model_number: {str(e)}")
         return f"Error in get_model_number: {str(e)}"
     
-def get_ip(log_data):
+def get_ip(log_data: str):
     """
-    Return the first IPv4 found in an 'ip address' style line, or None.
-    (Kept simple; expand patterns later if needed.)
+    Find the most likely management IPv4 address from the config text.
+    Strategy:
+      1) Split into 'interface ...' stanzas.
+      2) Score each stanza by presence of hardening lines (no ip redirects/unreachables/proxy-arp/route-cache).
+      3) Tie-break by interface type (SVI/Loopback/BDI) and 'management' in description.
+      4) Return first sanitized IPv4 from the best stanza.
+      5) Fallback: any IPv4-looking token in the whole file (sanitized).
+    Returns: '10.x.x.x' (normalized) or None.
     """
     try:
-        m = re.search(r"\bip address\s+(\d{1,3}(?:\.\d{1,3}){3})\b", log_data, re.IGNORECASE)
-        if m and _is_valid_ipv4(m.group(1)):
-            return m.group(1)
-        # fallback: any IPv4-looking token in the file
-        any_ip = re.search(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", log_data)
-        if any_ip and _is_valid_ipv4(any_ip.group(1)):
-            return any_ip.group(1)
+        if not log_data:
+            return None
+
+        blocks = _INTERFACE_BLOCK_RE.findall(log_data)
+        candidates = []
+
+        for blk in blocks:
+            # skip DHCP-assigned mgmt (no concrete IP)
+            if re.search(r'(?im)^\s*ip\s+address\s+dhcp\b', blk):
+                continue
+
+            # collect primary IPs in the stanza
+            ips_in_block = []
+            for m in _IP_LINE_RE.finditer(blk):
+                ip = m.group('ip')
+                line_str = m.group(0)
+                # deprioritize "secondary" IPs
+                if re.search(r'\bsecondary\b', line_str, flags=re.IGNORECASE):
+                    continue
+                ips_in_block.append(ip)
+
+            if not ips_in_block:
+                continue
+
+            score = _marker_score(blk)
+            rank = _prefer_rank(blk)
+
+            # Prefer stanzas that actually include *any* of your mgmt markers
+            # We'll sort by: (-score, rank) so more markers is better; then lower rank is better.
+            candidates.append((score, rank, ips_in_block, blk))
+
+        if candidates:
+            # Sort: highest score first, then lowest rank (preferred names/desc), keep original order stable next
+            candidates.sort(key=lambda t: (-t[0], t[1]))
+            best = candidates[0]
+            _, _, ips, _ = best
+
+            # Return first that sanitizes cleanly
+            for raw_ip in ips:
+                ip_norm = sanitize_ipv4(raw_ip)
+                if ip_norm not in {"Not available", "Require Manual Check"}:
+                    return ip_norm
+
+        # --- Fallback: any IPv4-ish token anywhere in the config ---
+        any_ip = re.search(r'(\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?)', log_data)
+        if any_ip:
+            ip_norm = sanitize_ipv4(any_ip.group(1))
+            if ip_norm not in {"Not available", "Require Manual Check"}:
+                return ip_norm
+
         return None
     except Exception:
         return None
 
 def get_ip_address(file_path):
     """
-    Enhanced: strict IPv4 validation + content fallback.
+    Enhanced: strict IPv4 validation + content fallback using sanitize_ipv4.
     Returns a tuple: (file_name, ip_or_status_string).
     """
     try:
         logging.info("Starting IP address extraction from file path.")
         file_name = os.path.basename(file_path) if isinstance(file_path, str) else str(file_path)
 
-        # 1) Filename-first, but collect all candidates and pick the first VALID IPv4
-        #    (looser filename finder; strict validation is applied after)
-        filename_candidates = re.findall(r"(\d{1,3}(?:\.\d{1,3}){3})", file_name)
-        valid_from_name = _first_valid_ipv4(filename_candidates)
-        if valid_from_name:
-            logging.debug(f"IP found in filename: {valid_from_name}")
-            return (file_name, valid_from_name)
+        # 1) Filename-first: collect candidates, return the first that sanitizes cleanly
+        filename_candidates = re.findall(r"(\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?)", file_name)
+        for cand in filename_candidates:
+            ip_norm = sanitize_ipv4(cand)
+            if ip_norm not in {"Not available", "Require Manual Check"}:
+                logging.debug(f"IP found in filename: {ip_norm}")
+                return (file_name, ip_norm)
 
-        # 2) Content fallback (read only if needed)
+        # 2) Content fallback (only if needed)
         try:
             with open(file_path, "r", errors="ignore") as f:
                 log_data = f.read()
-            from_content = get_ip(log_data)  # uses strict validation internally
-            if from_content:
-                logging.debug(f"IP found in file content: {from_content}")
-                return (file_name, from_content)
+
+            # Find all IPv4-ish tokens (allowing optional CIDR), sanitize each, pick first valid
+            content_candidates = re.findall(r"(\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?)", log_data)
+            for cand in content_candidates:
+                ip_norm = sanitize_ipv4(cand)
+                if ip_norm not in {"Not available", "Require Manual Check"}:
+                    logging.debug(f"IP found in file content: {ip_norm}")
+                    return (file_name, ip_norm)
+
+            # --- Last chance: call existing get_ip helper if available ---
+            try:
+                from_content = get_ip(log_data)
+                ip_norm = sanitize_ipv4(from_content)
+                if ip_norm not in {"Not available", "Require Manual Check"}:
+                    logging.debug(f"IP found via get_ip helper: {ip_norm}")
+                    return (file_name, ip_norm)
+            except Exception as e:
+                logging.warning(f"get_ip helper failed on {file_name}: {e}")
+
         except Exception as inner:
             logging.warning(f"Content fallback failed while reading {file_name}: {inner}")
 
@@ -112,18 +261,12 @@ def _is_valid_ipv4(addr: str) -> bool:
     except Exception:
         return False
 
-def _first_valid_ipv4(candidates):
-    for c in candidates:
-        if _is_valid_ipv4(c):
-            return c
-    return None
-
 def get_serial_number(log_data):
     try:
         logging.info("Starting serial number search.")
         match = re.search(r"System Serial Number\s+:\s+(\S+)", log_data)
         logging.debug("Serial number search completed.")
-        return match.group(1) if match else "Not available"
+        return match.group(1) if match else "Require Manual Check"
     except Exception as e:
         logging.error(f"Error in get_serial_number: {str(e)}")
         return f"Error in get_serial_number: {str(e)}"
@@ -140,7 +283,7 @@ def get_uptime(log_data):
         pattern = rf"{re.escape(hostname)}\s+uptime is\s+(.+)"
         match = re.search(pattern, log_data)
         logging.debug("Uptime search completed.")
-        return match.group(1).strip() if match else "Not available"
+        return match.group(1).strip() if match else "Require Manual Check"
     except Exception as e:
         logging.error(f"Error in get_uptime: {str(e)}")
         return f"Error in get_uptime: {str(e)}"
@@ -160,7 +303,7 @@ def get_last_reboot_reason(log_data):
         logging.info("Starting last reboot reason search.")
         match = re.search(r"Last reload reason:\s+(.+)", log_data)
         logging.debug("Last reboot reason search completed.")
-        return match.group(1) if match else "Not available"
+        return match.group(1) if match else "Require Manual Check"
     except Exception as e:
         logging.error(f"Error in get_last_reboot_reason: {str(e)}")
         return f"Error in get_last_reboot_reason: {str(e)}"
@@ -170,7 +313,7 @@ def get_cpu_utilization(log_data):
         logging.info("Starting CPU utilization search.")
         match = re.search(r"five minutes:\s+(\d+)%", log_data)
         logging.debug("CPU utilization search completed.")
-        return match.group(1) + "%" if match else "Not available"
+        return match.group(1) + "%" if match else "Require Manual Check"
     except Exception as e:
         logging.error(f"Error in get_cpu_utilization: {str(e)}")
         return f"Error in get_cpu_utilization: {str(e)}"
@@ -577,7 +720,7 @@ def get_interface_remark(log_data):
         else:
             logging.debug("No interface remark found in log data.")
             # IMPORTANT: keep OUTER shape as list-of-lists, one per switch
-            return [["Not available"]] * current_stack_size
+            return [["Require Manual Check"]] * current_stack_size
     except Exception as e:
         logging.error(f"Error in get_interface_remark: {str(e)}")
         # Preserve original error signaling shape (list-of-lists)

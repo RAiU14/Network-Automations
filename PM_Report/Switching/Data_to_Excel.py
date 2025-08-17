@@ -9,6 +9,8 @@ import openpyxl
 from openpyxl.styles import PatternFill, Alignment, Font
 import json  # for export_json
 from tempfile import NamedTemporaryFile
+from openpyxl.utils import get_column_letter
+
 
 # ----- version banner so you can confirm the right module is loaded -----
 PHASE2_VERSION = "Phase2-final-2025-08-17.hotfix1"
@@ -486,9 +488,7 @@ def process_and_style_excel(file_path):
                         "Yet to check",
                         "Command not found",
                         "Command not found.",
-                        "Not available",
                         "NA",
-                        "Not avialable",
                         "Non-IOS_XE",
                         "Unsupported IOS",
                         "Unsupported version",
@@ -524,10 +524,6 @@ def add_summary_sheet(file_path):
     """
     Ensure MAIN_SHEET is first and create/refresh a 'Summary' sheet at index 1.
     """
-    import openpyxl
-    from openpyxl.utils import get_column_letter
-    import re
-
     wb = openpyxl.load_workbook(file_path)
 
     # Ensure main sheet is first and named as required
