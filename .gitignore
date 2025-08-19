@@ -264,6 +264,7 @@ Test WLC 5508/
 test_IOS.py
 test_stack.py
 test_data_to_excel.py
+Coding progress_Live notes.txt
 
 Log_samples/
 
