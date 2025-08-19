@@ -3,7 +3,8 @@ import os
 import logging
 import datetime  # ← ADDED: Missing import
 import pprint as pp
-from . import IOS_XE_Stack_Switch
+# from . 
+import IOS_XE_Stack_Switch
     
 # Static strings
 NA = "Not available"
@@ -289,45 +290,13 @@ def get_uptime(log_data):
         return f"Error in get_uptime: {str(e)}"
 
 def get_current_sw_version(log_data):
-    """
-    Returns the software version string from 'show version' output.
-    Supports:
-      • IOS-XE 16/17 lines like: "Cisco IOS XE Software, Version 16.09.04"
-      • IOS-XE 16/17 classic line: "Cisco IOS Software [...], Version 16.9.4, RELEASE ..."
-      • IOS-XE 3.x lines like: "Cisco IOS Software, IOS-XE Software, ..., Version 03.06.06E ..."
-    On no match: "Not available".
-    """
     try:
-        if not log_data:
-            return "Not available"
-
-        # 1) Most explicit: "Cisco IOS XE Software, Version X"
-        m = re.search(r'(?mi)^\s*Cisco\s+IOS\s+XE\s+Software,\s*Version\s+([^\s,]+)', log_data)
-        if m:
-            return m.group(1).strip()
-
-        # 2) Common classic banner line that also appears on 16/17 & 3.x:
-        #    "Cisco IOS Software ... Version X[, ]"
-        m = re.search(r'(?mi)^\s*Cisco\s+IOS\s+Software.*?\bVersion\s+([^\s,]+)', log_data)
-        if m:
-            return m.group(1).strip()
-
-        # 3) Safety net for variants like "IOS-XE Software, ... Version X"
-        m = re.search(r'(?mi)\bIOS[- ]?XE\s+Software.*?\bVersion\s+([^\s,]+)', log_data)
-        if m:
-            return m.group(1).strip()
-
-        # 4) Last-chance: grab the first "Version X" in the top of the file
-        head = "\n".join(log_data.splitlines()[:50])
-        m = re.search(r'(?mi)\bVersion\s+([0-9A-Za-z.\(\)]+)', head)
-        if m:
-            return m.group(1).strip()
-
-        return "Not available"
-
+        # "Cisco IOS Software, C2960S Software (C2960S-UNIVERSALK9-M), Version 15.0(2)SE10, RELEASE SOFTWARE (fc3)"
+        m = re.search(r'(?mi)^\s*Cisco IOS Software.*Version\s+([^\s,]+)', log_data)
+        return m.group(1).strip() if m else "Not available"
     except Exception as e:
         logging.error(f"Error in get_current_sw_version: {str(e)}")
-        return "Not available"
+        return False
 
 def get_last_reboot_reason(log_data):
     try:
@@ -520,239 +489,185 @@ def get_flash_info(log_data):
         return f"Error in get_flash_info: {str(e)}"
 
 def get_fan_status(log_data):
-    """
-    Parse fan lines from 'show environment all' style output (XE 16/17 and XE 3.x).
-    Normalizes to: "OK" if all present fans are OK; "Not OK" if any fan reports a fault;
-    ignores "NOT PRESENT" entries. If nothing is found, returns "Unsupported version".
-    """
-    try:
-        if not log_data:
-            return "Not available"
-
-        # Match lines like:
-        #   "Switch 1 FAN 1 is OK"
-        #   "FAN PS-2 is NOT PRESENT"
-        fan_pat = re.compile(
-            r'(?mi)^\s*(?:Switch\s+\d+\s+)?FAN(?:\s+(?:PS-\d+|\d+))?\s+is\s+([A-Z ]+)\s*$'
-        )
-
-        statuses = []
-        for m in fan_pat.finditer(log_data):
-            raw = m.group(1).strip().upper()
-            if raw.startswith("OK"):
-                statuses.append("OK")
-            elif "NOT PRESENT" in raw:
-                statuses.append("NOT PRESENT")
-            elif raw in {"NOT OK", "FAILED", "FAIL", "FAULTY", "BAD"}:
-                statuses.append("NOT OK")
-            else:
-                # Unknown token – keep but treat as suspicious
-                statuses.append(raw)
-
-        if not statuses:
-            return "Unsupported version"
-
-        # Compute overall health: ignore NOT PRESENT; any NOT OK => Not OK; else OK if any OK seen
-        present_statuses = [s for s in statuses if s != "NOT PRESENT"]
-        if any(s == "NOT OK" for s in present_statuses):
-            return "Not OK"
-        if any(s == "OK" for s in present_statuses):
-            return "OK"
-
-        # Only NOT PRESENT seen (no installed fans reported)
-        return "Not available"
-
-    except Exception as e:
-        logging.error(f"Error in get_fan_status: {str(e)}")
-        return "Not available"
-
-def get_temperature_status(log_data: str):
-    """
-    Returns a list with one status per switch: ["OK", "Not OK", ...]
-    Supports:
-      - 16.x / 3.x: "Switch N: SYSTEM TEMPERATURE is OK"
-      - 17.x:       "SYSTEM INLET|OUTLET|HOTSPOT   N   GREEN|YELLOW|RED ..."
-    If nothing found: ["Not available"]
-    """
-    try:
-        logging.info("Starting temperature status extraction.")
-        per_switch_ok = {}
-
-        # --- 17.x style: SYSTEM INLET/OUTLET/HOTSPOT <sw> <GREEN|...>
-        # e.g. "SYSTEM INLET    2               GREEN                 25 Celsius ..."
-        m_sys = re.findall(r'(?mi)^\s*SYSTEM\s+(?:INLET|OUTLET|HOTSPOT)\s+(\d+)\s+([A-Z]+)', log_data)
-        if m_sys:
-            tmp = {}
-            for sw_str, state in m_sys:
-                sw = int(sw_str)
-                state_up = state.strip().upper()
-                # all GREEN => OK; any non-GREEN => Not OK
-                prev = tmp.get(sw, True)
-                tmp[sw] = prev and (state_up == "GREEN")
-            per_switch_ok.update(tmp)
-
-        # --- 16.x / 3.x style: "Switch N: SYSTEM TEMPERATURE is OK"
-        m_legacy = re.findall(r'(?mi)^\s*Switch\s+(\d+):\s*SYSTEM\s+TEMPERATURE\s+is\s+([A-Za-z ]+)\s*$', log_data)
-        if m_legacy:
-            tmp = {}
-            for sw_str, status_text in m_legacy:
-                sw = int(sw_str)
-                ok = (status_text.strip().upper() == "OK")
-                prev = tmp.get(sw, True)
-                tmp[sw] = prev and ok
-            # Merge — if we already had 17.x signals, AND them
-            for sw, ok in tmp.items():
-                per_switch_ok[sw] = per_switch_ok.get(sw, True) and ok
-
-        if not per_switch_ok:
-            logging.debug("No temperature patterns matched.")
-            return ["Not available"]
-
-        result = ["OK" if per_switch_ok[sw] else "Not OK" for sw in sorted(per_switch_ok.keys())]
-        logging.debug("Temperature status extraction completed.")
-        return result if result else ["Not available"]
-
-    except Exception as e:
-        logging.error(f"Error in get_temperature_status: {str(e)}")
-        return [f"Error in get_temperature_status: {str(e)}"]
-
-
-def get_fan_status(log_data: str):
-    """
-    Returns a list with one status per switch: ["OK", "Not OK", ...]
-    Supports:
-      - 16.x / 3.x: "Switch N FAN X is OK|NOT OK|NOT PRESENT"
-      - 17.x:       fan table under "Switch FAN Speed State Airflow direction"
-                    lines like: "<sw>  <rpm>  OK|NOT OK  <dir>"
-    Rules:
-      - NOT PRESENT is treated as OK for fan presence.
-      - If any fan line for a switch is NOT OK -> switch is Not OK.
-    If nothing found: ["Not available"]
-    """
     try:
         logging.info("Starting fan status extraction.")
-        per_switch_ok = {}
+        version = get_current_sw_version(log_data)
+        status = []
+        
+        if version.startswith('17'):
+            switches = log_data.split("Sensor List: Environmental Monitoring")[1:]
+            if not switches:
+                logging.debug("No fan status information found in log data.")
+                return ["Not available"]
+            for i, switch in enumerate(switches, start=1):
+                match = re.search(r'Switch FAN Speed State Airflow direction.*?(?=SW  PID)', switch, re.DOTALL)
+                if match:
+                    fan_section = match.group(0)
+                    fans = re.findall(r'\d+\s+\d+\s+(OK|[^O][^K])', fan_section)
+                    status.append('OK' if all(fan == 'OK' for fan in fans) else 'Not OK')
+        elif version.startswith('16'):
+            fan_statuses = re.findall(r'Switch (\d+) FAN \d+ is (OK|NOT OK|Faulty|Check)', log_data, re.IGNORECASE)
+            if fan_statuses:
+                switch_statuses = {}
+                for switch, fan_status in fan_statuses:
+                    if switch not in switch_statuses:
+                        switch_statuses[switch] = []
+                    switch_statuses[switch].append(fan_status.upper())
+                for switch in sorted(switch_statuses.keys(), key=int):
+                    if all(fan_status == 'OK' for fan_status in switch_statuses[switch]):
+                        status.append(['OK'])
+                    else:
+                        non_ok_statuses = [fan_status for fan_status in switch_statuses[switch] if fan_status != 'OK']
+                        if non_ok_statuses:
+                            status.append([non_ok_statuses[0]])
+                        else:
+                            status.append(['Not OK'])
+        else:
+            logging.error("Unsupported version")
+            return ["Unsupported version"]
+        
+        # NEW: normalize shape (flatten single-element lists)
+        status = [s[0] if isinstance(s, list) and len(s) == 1 else s for s in status]
 
-        # --- 16.x / 3.x style: "Switch 1 FAN 2 is OK"
-        m_legacy = re.findall(r'(?mi)^\s*Switch\s+(\d+)\s+FAN\s+\d+\s+is\s+([A-Za-z ]+)\s*$', log_data)
-        if m_legacy:
-            tmp = {}
-            for sw_str, state_text in m_legacy:
-                sw = int(sw_str)
-                st = state_text.strip().upper()
-                # NOT PRESENT -> acceptable
-                is_ok = (st == "OK" or st == "NOT PRESENT")
-                prev = tmp.get(sw, True)
-                tmp[sw] = prev and is_ok
-            per_switch_ok.update(tmp)
-
-        # --- 17.x style: "Switch FAN Speed State Airflow direction" block
-        # Lines look like: "  2    15458   OK Front to Back"
-        # We'll find the blocks and parse lines that start with a switch number.
-        if re.search(r'(?mi)^\s*Switch\s+FAN\s+Speed\s+State\s+Airflow\s+direction\s*$', log_data):
-            blocks = re.split(r'(?mi)^\s*Switch\s+FAN\s+Speed\s+State\s+Airflow\s+direction\s*$', log_data)
-            tmp = {}
-            for blk in blocks[1:]:
-                for raw in blk.splitlines():
-                    line = raw.strip()
-                    if not line or line.startswith('-'):
-                        continue
-                    cols = line.split()
-                    # Expect: <sw> <rpm> <state> <...>
-                    if len(cols) >= 3 and cols[0].isdigit() and cols[1].isdigit():
-                        sw = int(cols[0])
-                        st = cols[2].upper()  # <-- only the state token (e.g., "OK")
-                        is_ok = (st == "OK" or st == "NOT" or st == "PRESENT")  # keep lenient if vendors vary
-                        # Better: exact allow-list
-                        is_ok = (st == "OK")
-                        prev = tmp.get(sw, True)
-                        tmp[sw] = prev and is_ok
-            for sw, ok in tmp.items():
-                per_switch_ok[sw] = per_switch_ok.get(sw, True) and ok
-
-        if not per_switch_ok:
-            logging.debug("No fan patterns matched.")
-            return ["Not available"]
-
-        result = ["OK" if per_switch_ok[sw] else "Not OK" for sw in sorted(per_switch_ok.keys())]
         logging.debug("Fan status extraction completed.")
-        return result if result else ["Not available"]
-
+        return status if status else ["Not available"]
     except Exception as e:
         logging.error(f"Error in get_fan_status: {str(e)}")
-        return [f"Error in get_fan_status: {str(e)}"]
+        return f"Error in get_fan_status: {str(e)}"
 
-
-def get_power_supply_status(log_data: str):
-    """
-    Returns a list with one status per switch: ["OK", "NOT OK", ...]
-    Parses the PSU table present in 3.x/16.x/17.x:
-      Header like: "SW  PID  Serial#  Status  Sys Pwr  PoE Pwr  Watts"
-      Rows like:   "1A  PWR-...  <serial>  OK|...   Good  Good  715"
-                   "1B  Not Present"
-    Rules:
-      - A switch is OK if *all its PSU slots present* report Status "OK"
-        and any "Not Present" is also acceptable.
-      - Any other state (e.g., "Bad", "No Input Power", etc.) → NOT OK.
-    If nothing found: ["Not available"]
-    """
+def get_temperature_status(log_data):
     try:
+        version = get_current_sw_version(log_data)
+        logging.info("Starting temperature status extraction.")
+        if version.startswith('17'):
+            temperature_status = re.findall(r'SYSTEM (INLET|OUTLET|HOTSPOT)\s+(\d+)\s+(\w+)', log_data)
+            if not temperature_status:
+                logging.debug("No temperature status information found in log data.")
+                return ["Not available"]
+            switch_temps = {}
+            for temp in temperature_status:
+                switch = temp[1]
+                if switch not in switch_temps:
+                    switch_temps[switch] = []
+                switch_temps[switch].append(temp[2])
+            result = []
+            for switch, temps in switch_temps.items():
+                result.append('OK' if all(temp.upper() == 'GREEN' for temp in temps) else 'Not OK')
+            logging.debug("Temperature status extraction completed.")
+            return result if result else ["Not available"]
+        elif version.startswith('16'):
+            # Parse exactly as before
+            temperature_status = re.findall(r'Switch (\d+): SYSTEM TEMPERATURE is (.+)', log_data)
+            if not temperature_status:
+                logging.debug("No temperature status information found in log data.")
+                return ["Not available"]
+
+            # NEW: aggregate per switch to mirror 17.x final shape (one status per switch)
+            per_switch = {}
+            for switch_str, status_text in temperature_status:
+                sw = int(switch_str)
+                status = status_text.strip().upper()
+                # Logic-equivalent: a switch is OK iff the line says OK
+                # (If multiple lines per switch ever appear, we AND them: all must be OK)
+                current = per_switch.get(sw, True)
+                per_switch[sw] = current and (status == 'OK')
+
+            # Emit one entry per switch, ordered
+            result = ['OK' if per_switch[sw] else 'Not OK' for sw in sorted(per_switch.keys())]
+            logging.debug("Temperature status extraction completed.")
+            return result if result else ["Not available"]
+        else:
+            logging.error("Unsupported version")
+            return ["Unsupported version"]
+    except Exception as e:
+        logging.error(f"Error in get_temperature_status: {str(e)}")
+        return f"Error in get_temperature_status: {str(e)}"
+
+def get_power_supply_status(log_data):
+    try:
+        version = get_current_sw_version(log_data)
         logging.info("Starting power supply status extraction.")
-        lines = log_data.splitlines()
-        per_switch_slots = {}   # sw -> list[bool]
-        in_psu_table = False
+        results = []
+        if version.startswith('17'):
+            sensor_list_starts = [m.start() for m in re.finditer(r"Sensor List: Environmental Monitoring", log_data)]
+            if not sensor_list_starts:
+                logging.debug("No sensor list found in log data.")
+                return ["NA: No sensor list found"]
 
-        header_re = re.compile(r'(?mi)^\s*SW\s+PID\s+.*Serial#\s+.*Status')
-        row_slot_re = re.compile(r'^\s*(\d+)[A-Z]\b', re.IGNORECASE)
+            for i, start_index in enumerate(sensor_list_starts):
+                switch_block_start = start_index
+                switch_block_end = len(log_data)
+                if i + 1 < len(sensor_list_starts):
+                    switch_block_end = sensor_list_starts[i+1]
 
-        for i, line in enumerate(lines):
-            if not in_psu_table:
-                if header_re.search(line):
-                    in_psu_table = True
-                    # Usually a dashed separator next; skip it if present
-                    continue
-            else:
-                # Stop if blank, divider, or another section
-                if not line.strip() or re.search(r'-{3,}', line) or line.strip().startswith('Sensor List:') or line.strip().startswith('Switch FAN'):
-                    # don't break immediately — some outputs repeat blocks; just continue scanning
-                    continue
+                current_switch_data = log_data[switch_block_start:switch_block_end]
+                alarm_status = "OK"
 
-                m = row_slot_re.match(line)
-                if not m:
-                    # out of table or unrelated line; continue
-                    continue
+                sensor_section_match = re.search(r'Sensor List: Environmental Monitoring\s*([\s\S]*?)(?:Switch FAN Speed State Airflow direction|SW\s+PID|$)', current_switch_data, re.DOTALL)
+                if sensor_section_match:
+                    sensor_lines = sensor_section_match.group(1).strip().split('\n')
+                    for line in sensor_lines:
+                        if re.search(r'\s+FAULTY\s+', line):
+                            alarm_status = "Not OK"
+                            break
 
-                sw = int(m.group(1))
-                norm = line.strip()
+                if alarm_status == "OK":
+                    psu_pid_section_match = re.search(r'SW\s+PID.*?(---\s*|$)', current_switch_data, re.DOTALL)
+                    if psu_pid_section_match:
+                        psu_pid_section = psu_pid_section_match.group(0)
+                        if re.search(r'No Input Power|Bad', psu_pid_section):
+                            alarm_status = "ALARM"
+                results.append(alarm_status)
 
-                # Two typical shapes:
-                #  1) "1A  Not Present"
-                #  2) "1A  PWR-...  <serial>  OK  Good  Good  715"
-                is_ok = False
-                if re.search(r'(?i)\bNot\s+Present\b', norm):
-                    is_ok = True
-                else:
-                    # Extract the "Status" field; easiest robust check is look for explicit OK
-                    if re.search(r'(?i)\bOK\b', norm):
-                        is_ok = True
-                    # But downgrade if we see known bad markers
-                    if re.search(r'(?i)\b(BAD|FAIL|NO\s+INPUT\s+POWER|ALARM)\b', norm):
-                        is_ok = False
+            logging.debug("Power supply status extraction completed.")
+            return results if results else ["Not available"]
 
-                per_switch_slots.setdefault(sw, []).append(is_ok)
+        elif version.startswith('16'):
+            results = {}
+            lines = log_data.strip().split('\n')
+            pdu_line_pattern = re.compile(r'^\s*(\d+)[AB]\s+')
+            pdu_section_header = re.compile(r'SW\s+PID\s+.*Serial#\s+.*Status')
+            pdu_lines_start_index = -1
+            for i, line in enumerate(lines):
+                if pdu_section_header.search(line):
+                    pdu_lines_start_index = i + 2
+                    break
 
-        if not per_switch_slots:
-            logging.debug("No PSU table rows matched.")
-            return ["Not available"]
+            if pdu_lines_start_index != -1:
+                for line in lines[pdu_lines_start_index:]:
+                    if not line.strip() or '------------------' in line:
+                        break
+                    if pdu_line_pattern.match(line):
+                        parts = line.strip().split()
+                        try:
+                            switch_number = int(parts[0][:-1])
+                        except (ValueError, IndexError):
+                            continue
+                        status = "UNKNOWN"
+                        if "Not Present" in line:
+                            status = "Not Present"
+                        elif len(parts) > 3:
+                            status = parts[3].strip()
+                        if switch_number not in results:
+                            results[switch_number] = []
+                        is_ok = (status == "OK" or status == "Not Present")
+                        results[switch_number].append(is_ok)
 
-        result = []
-        for sw in sorted(per_switch_slots.keys()):
-            slots_ok = per_switch_slots[sw]
-            # If we saw any slot and any False -> NOT OK
-            result.append("OK" if all(slots_ok) else "NOT OK")
+            final_statuses = []
+            if results:
+                sorted_switch_numbers = sorted(results.keys())
+                for switch_num in sorted_switch_numbers:
+                    if len(results.get(switch_num, [])) == 2 and all(results.get(switch_num, [])):
+                        final_statuses.append("OK")
+                    else:
+                        final_statuses.append("NOT OK")
 
-        logging.debug("Power supply status extraction completed.")
-        return result if result else ["Not available"]
+            logging.debug("Power supply status extraction completed.")
+            return final_statuses if final_statuses else ["Not available"]
+
+        else:
+            logging.error("Unsupported version")
+            return ["Unsupported version"]
 
     except Exception as e:
         logging.error(f"Error in get_power_supply_status: {str(e)}")
@@ -880,10 +795,7 @@ def get_interface_remark(log_data):
             interface_remark = [switch_interfaces.get(str(i), []) for i in range(1, max_switch_number + 1)]
             interface_remark = [sublist if sublist else ['Not avialable'] for sublist in interface_remark]
             logging.debug("Interface remark extraction completed.")
-            if interface_remark:
-                return interface_remark
-            else:
-                return "Not Available"
+            return interface_remark
         else:
             logging.debug("No interface remark found in log data.")
             # IMPORTANT: keep OUTER shape as list-of-lists, one per switch
@@ -1244,7 +1156,7 @@ def _placeholder_entry(file_path, reason_text="Non-IOS_XE"):
 
 def main():
     try:
-        file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200\UOBAM-C9300-PLA-L20-DSW-01_10.52.254.5.txt"
+        file_path = r""
         # directory_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR136818637\CBJ_SVR136818637\New Folder"
         data = process_file(file_path)
         print_data(data)
