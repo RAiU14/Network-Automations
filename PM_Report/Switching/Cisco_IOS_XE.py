@@ -880,14 +880,11 @@ def get_interface_remark(log_data):
             interface_remark = [switch_interfaces.get(str(i), []) for i in range(1, max_switch_number + 1)]
             interface_remark = [sublist if sublist else ['Not avialable'] for sublist in interface_remark]
             logging.debug("Interface remark extraction completed.")
-            if interface_remark:
-                return interface_remark
-            else:
-                return "Not Available"
+            return interface_remark
         else:
             logging.debug("No interface remark found in log data.")
             # IMPORTANT: keep OUTER shape as list-of-lists, one per switch
-            return [["Require Manual Check"]] * current_stack_size
+            return [["Not available"]] * current_stack_size
     except Exception as e:
         logging.error(f"Error in get_interface_remark: {str(e)}")
         # Preserve original error signaling shape (list-of-lists)
