@@ -113,7 +113,7 @@
         <select name="technology" id="technology" required>
           <option value="" disabled selected>Select a technology</option>
           {% for tech in technologies %}
-            <option value="{{ tech }}">{{ tech }}</option>
+            <option value="{{ tech.value }}">{{ tech.label }}</option>
           {% endfor %}
         </select>
         <div id="technologyStatus" class="debug-info"></div>
