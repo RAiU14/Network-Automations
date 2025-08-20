@@ -3,7 +3,6 @@ import json
 import logging
 import os
 import datetime
-import pandas as pd
 import bs4
 import requests
 from langdetect import detect
