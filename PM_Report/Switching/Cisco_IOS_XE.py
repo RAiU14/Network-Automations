@@ -3,7 +3,8 @@ import os
 import logging
 import datetime  # ← ADDED: Missing import
 import pprint as pp
-from . import IOS_XE_Stack_Switch
+# from . 
+import IOS_XE_Stack_Switch
     
 # Static strings
 NA = "Not available"
@@ -682,80 +683,85 @@ def get_fan_status(log_data: str):
         logging.error(f"Error in get_fan_status: {str(e)}")
         return [f"Error in get_fan_status: {str(e)}"]
 
-
 def get_power_supply_status(log_data: str):
     """
-    Returns a list with one status per switch: ["OK", "NOT OK", ...]
-    Parses the PSU table present in 3.x/16.x/17.x:
-      Header like: "SW  PID  Serial#  Status  Sys Pwr  PoE Pwr  Watts"
-      Rows like:   "1A  PWR-...  <serial>  OK|...   Good  Good  715"
-                   "1B  Not Present"
-    Rules:
-      - A switch is OK if *all its PSU slots present* report Status "OK"
-        and any "Not Present" is also acceptable.
-      - Any other state (e.g., "Bad", "No Input Power", etc.) → NOT OK.
-    If nothing found: ["Not available"]
+    Returns a list of statuses per switch.
+      - "OK" if all present PSUs are OK.
+      - "Not Present" if any PSU is missing (but no failures).
+      - "NOT OK" if any PSU reports a bad state.
+      - "UNKNOWN" if unrecognized states.
+      - ["Not available"] if no PSU table found.
     """
     try:
-        logging.info("Starting power supply status extraction.")
+        logging.info("Starting power supply status extraction")
         lines = log_data.splitlines()
-        per_switch_slots = {}   # sw -> list[bool]
+        per_switch_slots = {}   # sw -> list of status strings
         in_psu_table = False
 
         header_re = re.compile(r'(?mi)^\s*SW\s+PID\s+.*Serial#\s+.*Status')
-        row_slot_re = re.compile(r'^\s*(\d+)[A-Z]\b', re.IGNORECASE)
+        row_slot_re = re.compile(r'^\s*(\d+[A-Z])\b', re.IGNORECASE)
 
-        for i, line in enumerate(lines):
+        for idx, line in enumerate(lines):
             if not in_psu_table:
                 if header_re.search(line):
                     in_psu_table = True
-                    # Usually a dashed separator next; skip it if present
+                    logging.debug(f"Found PSU table header at line {idx}: {line.strip()}")
                     continue
             else:
-                # Stop if blank, divider, or another section
-                if not line.strip() or re.search(r'-{3,}', line) or line.strip().startswith('Sensor List:') or line.strip().startswith('Switch FAN'):
-                    # don't break immediately — some outputs repeat blocks; just continue scanning
+                if not line.strip() or re.search(r'-{3,}', line) or line.strip().startswith(('Sensor List:', 'Switch FAN')):
                     continue
 
                 m = row_slot_re.match(line)
                 if not m:
-                    # out of table or unrelated line; continue
                     continue
 
-                sw = int(m.group(1))
+                slot = m.group(1).upper()
+                sw = int(slot[:-1])
                 norm = line.strip()
+                status = ""
 
-                # Two typical shapes:
-                #  1) "1A  Not Present"
-                #  2) "1A  PWR-...  <serial>  OK  Good  Good  715"
-                is_ok = False
                 if re.search(r'(?i)\bNot\s+Present\b', norm):
-                    is_ok = True
+                    status = "Not Present"
+                elif re.search(r'(?i)\bOK\b', norm):
+                    status = "OK"
+                elif re.search(r'(?i)\b(BAD|FAIL|NO\s+INPUT\s+POWER|ALARM)\b', norm):
+                    status = "NOT OK"
                 else:
-                    # Extract the "Status" field; easiest robust check is look for explicit OK
-                    if re.search(r'(?i)\bOK\b', norm):
-                        is_ok = True
-                    # But downgrade if we see known bad markers
-                    if re.search(r'(?i)\b(BAD|FAIL|NO\s+INPUT\s+POWER|ALARM)\b', norm):
-                        is_ok = False
+                    status = "UNKNOWN"
 
-                per_switch_slots.setdefault(sw, []).append(is_ok)
+                logging.debug(f"Parsed line {idx}: slot={slot}, sw={sw}, status={status}")
+                per_switch_slots.setdefault(sw, []).append((slot, status))
 
         if not per_switch_slots:
-            logging.debug("No PSU table rows matched.")
+            logging.warning("No PSU table rows matched")
             return ["Not available"]
 
         result = []
         for sw in sorted(per_switch_slots.keys()):
-            slots_ok = per_switch_slots[sw]
-            # If we saw any slot and any False -> NOT OK
-            result.append("OK" if all(slots_ok) else "NOT OK")
+            slots = per_switch_slots[sw]
+            logging.debug(f"Evaluating Switch {sw} with slots: {slots}")
 
-        logging.debug("Power supply status extraction completed.")
-        return result if result else ["Not available"]
+            if any(status == "NOT OK" for _, status in slots):
+                bad_slot = next(slot for slot, status in slots if status == "NOT OK")
+                result.append(f"{bad_slot}: NOT OK")
+                logging.info(f"Switch {sw} -> {bad_slot}: NOT OK")
+            elif any(status == "Not Present" for _, status in slots):
+                missing_slot = next(slot for slot, status in slots if status == "Not Present")
+                result.append(f"{missing_slot}: Not Present")
+                logging.info(f"Switch {sw} -> {missing_slot}: Not Present")
+            elif all(status == "OK" for _, status in slots):
+                ok_slot = ", ".join(slot for slot, _ in slots)
+                result.append("OK")
+                logging.info(f"Switch {sw} -> All OK ({ok_slot})")
+            else:
+                result.append("UNKNOWN")
+                logging.info(f"Switch {sw} -> UNKNOWN")
+
+        logging.info("Completed power supply status extraction")
+        return result
 
     except Exception as e:
-        logging.error(f"Error in get_power_supply_status: {str(e)}")
+        logging.error(f"Error in get_power_supply_status: {str(e)}", exc_info=True)
         return [f"Error in get_power_supply_status: {str(e)}"]
 
 def get_debug_status(log_data):
@@ -1241,13 +1247,13 @@ def _placeholder_entry(file_path, reason_text="Non-IOS_XE"):
 
 def main():
     try:
-        file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200\UOBAM-C9300-PLA-L20-DSW-01_10.52.254.5.txt"
-        # directory_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR136818637\CBJ_SVR136818637\New Folder"
-        data = process_file(file_path)
-        print_data(data)
-        # for item in data:
-        #     # print(item["Interface ip address"])
-        #     print_data(item)
+        # file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200\UOBM-C9200-APG-OA-01_10.59.80.10.txt"
+        directory_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200\temp"
+        data = process_directory(directory_path)
+        # print_data(data)
+        for item in data:
+            # print(item["Interface ip address"])
+            print_data(item)
         # pp.pprint(data["Interface ip address"])
     except Exception as e:
         print(f"Error in main: {str(e)}")
