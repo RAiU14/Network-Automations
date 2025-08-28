@@ -7,7 +7,6 @@ import logging
 import datetime
 import shutil
 import zipfile
-import tempfile
 from typing import Dict, Any
 from pathlib import Path
 
@@ -371,6 +370,7 @@ def process_upload(request_data: Dict[str, Any], file_obj, upload_folder: str, o
             
         try:
             data = Cisco_IOS_XE.process_directory(extraction_result['extract_path'])
+            # Data will now have all the processed information from the log file.
             logging.info("Cisco_IOS_XE processing completed successfully")
         except Exception as e:
             logging.error(f"Cisco_IOS_XE processing failed: {e}")

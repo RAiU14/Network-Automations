@@ -275,10 +275,16 @@ Cisco 3000 switch.py
 
 Database/Remarks.py
 Database/auto_pop_enhanced.py
-EOX/API.py
+EOX/RAiU_API.py
+EOX/result.json
+EOX/test.py
+EOX/scrap.py
+EOX/Crediability.json
+WebPage/backup.py
 PM_Report/Switching/Cisco_9000_switch.py
 example_ticket.xlsx
 updated_output.xlsx
 PM_Report/Switching/Cisco 9000 switch.py
 uploads/
 PM_Report\Switching\remark.py
+Django/
