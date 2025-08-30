@@ -23,14 +23,6 @@ if not logging.getLogger().handlers:
 # Stanza splitter: grabs each "interface ..." block (multiline)
 _INTERFACE_BLOCK_RE = re.compile(r'(?ms)^interface\s+\S+.*?(?=^interface\s+\S+|\Z)')
 
-# Lines that usually accompany the management SVI
-_MGMT_MARKERS = (
-    r'no\s+ip\s+redirects',
-    r'no\s+ip\s+unreachables',
-    r'no\s+ip\s+proxy-arp',
-    r'no\s+ip\s+route-cache',
-)
-
 # IP line patterns inside a stanza (IOS/IOS-XE typical):
 # - "ip address 10.1.2.3 255.255.255.0"
 # - "ip address 10.1.2.3/24"
@@ -42,36 +34,6 @@ _IP_LINE_RE = re.compile(
     r'(?:\s+secondary)?\s*$',
     re.IGNORECASE | re.MULTILINE
 )
-
-# Optional extra hints for a management interface
-_PREFER_NAME_RE = re.compile(r'(?im)^interface\s+(?:(?:vlan\d+)|(?:loopback0)|(?:bdi\d+))\b')
-_DESC_MGMT_RE   = re.compile(r'(?im)^\s*description\s+.*\b(mgmt|manage|management)\b')
-
-def _marker_score(block: str) -> int:
-    """Score a stanza by how many management-hardening markers it contains."""
-    s = 0
-    for pat in _MGMT_MARKERS:
-        if re.search(pat, block, flags=re.IGNORECASE):
-            s += 1
-    return s
-
-def _prefer_rank(block: str) -> int:
-    """
-    Lower is better.
-    0: SVI/Loopback/BDI with 'management' hint in description
-    1: SVI/Loopback/BDI without desc hint
-    2: Anything else with desc hint
-    3: Anything else
-    """
-    is_pref_if = bool(_PREFER_NAME_RE.search(block))
-    has_mgmt_desc = bool(_DESC_MGMT_RE.search(block))
-    if is_pref_if and has_mgmt_desc:
-        return 0
-    if is_pref_if:
-        return 1
-    if has_mgmt_desc:
-        return 2
-    return 3
 
 _IP_RE = re.compile(r'^\s*(\d+)\.(\d+)\.(\d+)\.(\d+)\s*$')
 
@@ -105,6 +67,60 @@ def sanitize_ipv4(value: str) -> str:
         return "Require Manual Check"
     return s_norm
 
+def get_ip(log_data: str):
+    """
+    Management IP selection priority inside config:
+      1) iface name/description contains mgmt|manage|management
+      2) LoopbackX
+      3) Vlan 1
+    Skips DHCP stanzas. Returns normalized IPv4 or None.
+    """
+    try:
+        if not log_data:
+            return None
+
+        blocks = _INTERFACE_BLOCK_RE.findall(log_data)
+        buckets = {"mgmt": [], "loop": [], "vlan1": []}
+
+        for blk in blocks:
+            # Skip DHCP-configured stanzas (no static IP present)
+            if re.search(r'(?im)^\s*ip\s+address\s+dhcp\b', blk):
+                continue
+
+            # Collect primary, non-secondary IPs
+            ips = []
+            for m in _IP_LINE_RE.finditer(blk):
+                if re.search(r'\bsecondary\b', m.group(0), flags=re.IGNORECASE):
+                    continue
+                ips.append(m.group('ip'))
+            if not ips:
+                continue
+
+            # Classify stanza
+            header = re.search(r'(?im)^interface\s+([^\r\n]+)', blk)
+            iface = header.group(1) if header else ""
+
+            name_has_mgmt = re.search(r'\b(mgmt|manage|management)\b', iface, re.IGNORECASE)
+            desc_has_mgmt = re.search(r'(?im)^\s*description\s+.*\b(mgmt|manage|management)\b', blk)
+
+            if name_has_mgmt or desc_has_mgmt:
+                buckets["mgmt"].append(ips)
+            elif re.search(r'(?im)^interface\s+loopback\d+\b', blk):
+                buckets["loop"].append(ips)
+            elif re.search(r'(?im)^interface\s+vlan\s*1\b', blk):
+                buckets["vlan1"].append(ips)
+
+        # Pick first valid IP from the highest-priority non-empty bucket
+        for key in ("mgmt", "loop", "vlan1"):
+            for ips in buckets[key]:
+                for raw in ips:
+                    ip_norm = sanitize_ipv4(raw)
+                    if ip_norm not in {"Not available", "Require Manual Check"}:
+                        return ip_norm
+        return "Require manual check"
+    except Exception:
+        return None
+
 def log_type(log_data):
     if not isinstance(log_data, str):
         logging.error("Invalid input type for log_data")
@@ -129,72 +145,6 @@ def get_model_number(log_data):
     except Exception as e:
         logging.error(f"Error in get_model_number: {str(e)}")
         return f"Error in get_model_number: {str(e)}"
-    
-def get_ip(log_data: str):
-    """
-    Find the most likely management IPv4 address from the config text.
-    Strategy:
-      1) Split into 'interface ...' stanzas.
-      2) Score each stanza by presence of hardening lines (no ip redirects/unreachables/proxy-arp/route-cache).
-      3) Tie-break by interface type (SVI/Loopback/BDI) and 'management' in description.
-      4) Return first sanitized IPv4 from the best stanza.
-      5) Fallback: any IPv4-looking token in the whole file (sanitized).
-    Returns: '10.x.x.x' (normalized) or None.
-    """
-    try:
-        if not log_data:
-            return None
-
-        blocks = _INTERFACE_BLOCK_RE.findall(log_data)
-        candidates = []
-
-        for blk in blocks:
-            # skip DHCP-assigned mgmt (no concrete IP)
-            if re.search(r'(?im)^\s*ip\s+address\s+dhcp\b', blk):
-                continue
-
-            # collect primary IPs in the stanza
-            ips_in_block = []
-            for m in _IP_LINE_RE.finditer(blk):
-                ip = m.group('ip')
-                line_str = m.group(0)
-                # deprioritize "secondary" IPs
-                if re.search(r'\bsecondary\b', line_str, flags=re.IGNORECASE):
-                    continue
-                ips_in_block.append(ip)
-
-            if not ips_in_block:
-                continue
-
-            score = _marker_score(blk)
-            rank = _prefer_rank(blk)
-
-            # Prefer stanzas that actually include *any* of your mgmt markers
-            # We'll sort by: (-score, rank) so more markers is better; then lower rank is better.
-            candidates.append((score, rank, ips_in_block, blk))
-
-        if candidates:
-            # Sort: highest score first, then lowest rank (preferred names/desc), keep original order stable next
-            candidates.sort(key=lambda t: (-t[0], t[1]))
-            best = candidates[0]
-            _, _, ips, _ = best
-
-            # Return first that sanitizes cleanly
-            for raw_ip in ips:
-                ip_norm = sanitize_ipv4(raw_ip)
-                if ip_norm not in {"Not available", "Require Manual Check"}:
-                    return ip_norm
-
-        # --- Fallback: any IPv4-ish token anywhere in the config ---
-        any_ip = re.search(r'(\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?)', log_data)
-        if any_ip:
-            ip_norm = sanitize_ipv4(any_ip.group(1))
-            if ip_norm not in {"Not available", "Require Manual Check"}:
-                return ip_norm
-
-        return None
-    except Exception:
-        return None
 
 def get_ip_address(file_path):
     """
@@ -246,21 +196,6 @@ def get_ip_address(file_path):
         logging.error(f"Error in get_ip_address: {str(e)}")
         safe_name = os.path.basename(file_path) if isinstance(file_path, str) else "Unknown"
         return (safe_name, "Require Manual Check")
-    
-def _is_valid_ipv4(addr: str) -> bool:
-    try:
-        parts = addr.split(".")
-        if len(parts) != 4:
-            return False
-        for p in parts:
-            if not p.isdigit():
-                return False
-            n = int(p)
-            if n < 0 or n > 255:
-                return False
-        return True
-    except Exception:
-        return False
 
 def get_serial_number(log_data):
     try:
@@ -1248,7 +1183,7 @@ def _placeholder_entry(file_path, reason_text="Non-IOS_XE"):
 def main():
     try:
         # file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200\UOBM-C9200-APG-OA-01_10.59.80.10.txt"
-        directory_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200\temp"
+        directory_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200"
         data = process_directory(directory_path)
         # print_data(data)
         for item in data:
