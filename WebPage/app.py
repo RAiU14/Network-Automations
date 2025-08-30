@@ -138,14 +138,30 @@ def async_process_upload(form_data, file_path, upload_folder, overwrite_existing
     except Exception as e:
         logging.exception(f"[CONCURRENT] Background processing error for ticket {form_data['ticket']}: {str(e)}")
 
+# Technology options: UI label vs backend value
+TECHNOLOGY_OPTIONS = [
+    {"label": "Wireless", "value": "Wireless"},
+    {"label": "Routing and Swiching",      "value": "Switches"},  # UI shows RNS, backend still receives "Switches"
+    {"label": "Security", "value": "Security"},
+    {"label": "Others",   "value": "Others"},
+]
+
+VALID_TECH_VALUES = {opt["value"] for opt in TECHNOLOGY_OPTIONS}
+TECH_ALIASES = {"Routing and Swiching": "Switches"}  # just in case something posts "RNS" directly
+
+def normalize_technology(value: str) -> str:
+    """Ensure technology maps to a known backend value."""
+    v = (value or "").strip()
+    v = TECH_ALIASES.get(v, v)
+    return v if v in VALID_TECH_VALUES else "Others"
+
 @app.route('/')
 def index():
-    """Main upload page"""
     logging.info("Index route accessed")
     try:
-        technologies = ['Wireless', 'Switches', 'Security', 'Others']
+        technologies = TECHNOLOGY_OPTIONS
         logging.debug(f"Available technologies: {technologies}")
-        
+
         upload_exists = os.path.exists(UPLOAD_FOLDER)
         logging.debug(f"Upload folder exists: {upload_exists}")
         
@@ -158,8 +174,10 @@ def index():
     except Exception as e:
         logging.error(f"Error in index route: {str(e)}")
         logging.exception("Full traceback for index route error:")
-        flash('An error occurred while loading the page', 'error')
-        return render_template('upload.html', technologies=['Wireless', 'Switches', 'Security', 'Others'])
+        flash('Error occurred while loading the page', 'error')
+        # If we can't load the page, at least render the upload form with a warning
+        # fall back to the same structure so the template still works
+        return render_template('upload.html', technologies=TECHNOLOGY_OPTIONS)
 
 @app.route('/api/check_ticket', methods=['POST'])
 def api_check_ticket():
@@ -203,6 +221,7 @@ def upload():
             'comment': request.form.get('comment', ''),
             'technology': request.form.get('technology', '')
         }
+        form_data['technology'] = normalize_technology(form_data['technology'])
         file_obj = request.files.get('file')
         overwrite_confirmed = request.form.get('overwrite_confirmed', 'false') == 'true'
         
