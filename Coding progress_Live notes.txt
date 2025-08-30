@@ -103,16 +103,30 @@ Ready for Phase 3
 The pipeline is stable to extend with IOS / ASR / ISR branches.
 Non-IOS-XE handling pattern (placeholder + Remark tag) gives a clear template for other families.
 
-Stcuture for pipeline:
-your_repo/
-├─ Cisco_IOS_XE.py          # your current stable XE parser (unchanged)
-├─ platform_detect.py       # the detector you just built
-├─ pipeline/
-│  ├─ __init__.py
-│  ├─ base.py               # tiny common interface
-│  ├─ ios_xe_adapter.py     # thin wrapper that calls your Cisco_IOS_XE functions
-│  ├─ ios_classic_stub.py   # stub (returns placeholder for now)
-│  ├─ asr_stub.py           # stub (returns placeholder for now)
-│  ├─ isr_stub.py           # stub (returns placeholder for now)
-│  └─ dispatcher.py         # registry + dispatcher + process_directory()
-└─ Data_to_Excel.py         # keep as-is; just import the new process_directory
+
+Shivs idea for structuring:
+
+
+PM_Report/
+├─ File_to_call.py        # <--- only one file, the function-based version
+├─ Cisco_IOS_XE.py
+├─ IOS_XE_Stack_Switch.py
+├─ Data_to_Excel.py
+├─ platform_detect.py
+├─ test.py
+└─ Switching/
+   ├─ __init__.py
+   ├─ dispatcher.py
+   └─ Cisco/
+      ├─ __init__.py
+      ├─ ios/
+      │  ├─ __init__.py
+      │  └─ ios_classic_stub.py
+      ├─ ios_xe/
+      │  ├─ __init__.py
+      │  └─ ios_xe_adapter.py
+      └─ routers/
+         ├─ __init__.py
+         ├─ asr_stub.py
+         └─ isr_stub.py
+ 
