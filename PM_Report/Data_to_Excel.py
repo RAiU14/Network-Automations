@@ -1,7 +1,6 @@
 import os
 import pandas as pd
 import logging
-from . import Cisco_IOS_XE
 import re
 from datetime import datetime, timedelta
 from dateutil import parser
@@ -10,6 +9,11 @@ from openpyxl.styles import PatternFill, Alignment, Font
 import json  # for export_json
 from tempfile import NamedTemporaryFile
 from openpyxl.utils import get_column_letter
+
+try:
+    from . import Cisco_IOS_XE
+except:
+    import Cisco_IOS_XE
 
 
 # ----- version banner so you can confirm the right module is loaded -----
@@ -681,8 +685,8 @@ def add_summary_sheet(file_path):
 
 def main():
     try:
-        file_path = r""
-        directory_path = r""
+        file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\3750\UOBM-C3750-JOT-L03-03_10.31.99.12.txt"
+        directory_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\9200"
         ticket_number = "SVR3456789"
 
         # 1) Parse all eligible files in the directory

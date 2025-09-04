@@ -3,8 +3,10 @@ import os
 import logging
 import datetime  # ← ADDED: Missing import
 import pprint as pp
-# from . 
-import IOS_XE_Stack_Switch
+try:
+    from . import IOS_Stack_Switch
+except:
+    import IOS_Stack_Switch
     
 # Static strings
 NA = "Not available"
@@ -123,7 +125,8 @@ def get_hostname(log_data):
 def get_model_number(log_data):
     try:
         logging.info("Starting model number search.")
-        match = re.search(r"Model Number\s+:\s+(\S+)", log_data)
+        # Match 'Model Number' or 'Model number' (case-insensitive) with variable spaces
+        match = re.search(r"Model\s+Number\s*:\s*(\S+)", log_data, re.IGNORECASE)
         logging.debug("Model number search completed.")
         return match.group(1) if match else "Require Manual Check"
     except Exception as e:
@@ -265,7 +268,8 @@ def _is_valid_ipv4(addr: str) -> bool:
 def get_serial_number(log_data):
     try:
         logging.info("Starting serial number search.")
-        match = re.search(r"System Serial Number\s+:\s+(\S+)", log_data)
+        # Make it case-insensitive and handle spaces
+        match = re.search(r"System\s+Serial\s+Number\s*:\s*(\S+)", log_data, re.IGNORECASE)
         logging.debug("Serial number search completed.")
         return match.group(1) if match else "Require Manual Check"
     except Exception as e:
@@ -301,9 +305,19 @@ def get_current_sw_version(log_data):
 def get_last_reboot_reason(log_data):
     try:
         logging.info("Starting last reboot reason search.")
-        match = re.search(r"Last reload reason:\s+(.+)", log_data)
+        
+        # First try to match "Last reload reason"
+        match = re.search(r"Last reload reason\s*:\s*(.+)", log_data, re.IGNORECASE)
+        if match:
+            result = match.group(1).strip()
+        else:
+            # Fallback: match "System returned to ROM by ..."
+            match = re.search(r"System returned to ROM by\s+(.+)", log_data, re.IGNORECASE)
+            result = match.group(1).strip() if match else "Require Manual Check"
+        
         logging.debug("Last reboot reason search completed.")
-        return match.group(1) if match else "Require Manual Check"
+        return result
+
     except Exception as e:
         logging.error(f"Error in get_last_reboot_reason: {str(e)}")
         return f"Error in get_last_reboot_reason: {str(e)}"
@@ -342,7 +356,7 @@ def check_stack(log_data):
             logging.debug("No switch information found in log data.")
             return False
         else:
-            stack_details = IOS_XE_Stack_Switch.parse_ios_xe_stack_switch(log_data)
+            stack_details = IOS_Stack_Switch.parse_IOS_Stack_Switch(log_data)
             logging.debug("Stack check completed.")
             return stack_details
     except Exception as e:
@@ -462,126 +476,126 @@ def calculate_flash_utilization(available_bytes, used_bytes):
 def get_flash_info(log_data):
     try:
         logging.info("Starting flash info extraction.")
-        total_flashes = re.findall(r"show\s+flash(?:-\d+)?:\s*all", log_data)
         flash_information = {}
-        if total_flashes:
-            for item in total_flashes:
-                start_index = re.search(item, log_data)
-                if start_index:
-                    end_index = re.search(r"show\s", log_data[start_index.span()[1]:])
-                    if end_index:
-                        flash_data = log_data[start_index.span()[1]:start_index.span()[1] + end_index.span()[0]]
-                        m = re.findall(r'^\s*(\d+)\s+bytes\s+available\s+\((\d+)\s+bytes\s+used\)', flash_data, re.MULTILINE)
-                        if m:
-                            for available_str, used_str in m:
-                                available_bytes = int(available_str)
-                                used_bytes = int(used_str)
-                                total, used, free, utilization = calculate_flash_utilization(available_bytes, used_bytes)
-                                flash_number = re.findall(r'\d+', item)
-                                key = flash_number[0] if flash_number else '1'
-                                flash_information[key] = [total, used, free, utilization]
-            logging.debug("Flash info extraction completed.")
-            return flash_information if flash_information else "No flash information found"
-        logging.debug("No flash info found in log data.")
-        return "No flash information found"
+
+        # Match header lines like: "------------------ show flash: all ------------------"
+        header_iter = list(re.finditer(
+            r'^\s*-{2,}\s*show\s+flash(?:[-:]?\s*(\d+))?\s*:?(?:\s*all)?\s*-{2,}\s*$',
+            log_data, flags=re.IGNORECASE | re.MULTILINE
+        ))
+        if not header_iter:
+            logging.debug("No flash headers found in log data.")
+            return "No flash information found"
+
+        # Find positions of ANY show-section header to bound sections
+        all_header_iter = list(re.finditer(
+            r'^\s*-{2,}\s*show\b.*?-{2,}\s*$',
+            log_data, flags=re.IGNORECASE | re.MULTILINE
+        ))
+        all_header_positions = [m.start() for m in all_header_iter]
+
+        for hdr in header_iter:
+            start = hdr.end()
+            next_pos = next((p for p in all_header_positions if p > start), None)
+            end = next_pos if next_pos is not None else len(log_data)
+            section = log_data[start:end]
+
+            # Pattern A: "NNN bytes available (MMM bytes used)"
+            m_avail_used = re.search(
+                r'^\s*(\d+)\s+bytes\s+available\s*\(\s*(\d+)\s+bytes\s+used\s*\)\s*$',
+                section, flags=re.IGNORECASE | re.MULTILINE
+            )
+            # Pattern B: "NNN bytes total (MMM bytes free)"
+            m_total_free = re.search(
+                r'^\s*(\d+)\s+bytes\s+total\s*\(\s*(\d+)\s+bytes\s+free\s*\)\s*$',
+                section, flags=re.IGNORECASE | re.MULTILINE
+            )
+
+            if m_avail_used:
+                available_bytes = int(m_avail_used.group(1))
+                used_bytes = int(m_avail_used.group(2))
+            elif m_total_free:
+                total_bytes = int(m_total_free.group(1))
+                free_bytes = int(m_total_free.group(2))
+                available_bytes = free_bytes
+                used_bytes = total_bytes - free_bytes
+            else:
+                # No recognizable summary line in this section
+                continue
+
+            total, used, free, utilization = calculate_flash_utilization(available_bytes, used_bytes)
+
+            # Figure out flash number from header (flash, flash2, flash-3, etc.)
+            num = hdr.group(1)
+            key = num if num else '1'  # keep your original '1' default
+
+            flash_information[key] = [total, used, free, utilization]
+
+        logging.debug("Flash info extraction completed.")
+        return flash_information if flash_information else "No flash information found"
+
     except Exception as e:
         logging.error(f"Error in get_flash_info: {str(e)}")
         return f"Error in get_flash_info: {str(e)}"
 
-def get_fan_status(log_data):
+def get_fan_status(log_data: str):
     try:
-        logging.info("Starting fan status extraction.")
-        version = get_current_sw_version(log_data)
-        status = []
-        
-        if version.startswith('17'):
-            switches = log_data.split("Sensor List: Environmental Monitoring")[1:]
-            if not switches:
-                logging.debug("No fan status information found in log data.")
-                return ["Not available"]
-            for i, switch in enumerate(switches, start=1):
-                match = re.search(r'Switch FAN Speed State Airflow direction.*?(?=SW  PID)', switch, re.DOTALL)
-                if match:
-                    fan_section = match.group(0)
-                    fans = re.findall(r'\d+\s+\d+\s+(OK|[^O][^K])', fan_section)
-                    status.append('OK' if all(fan == 'OK' for fan in fans) else 'Not OK')
-        elif version.startswith('16'):
-            fan_statuses = re.findall(r'Switch (\d+) FAN \d+ is (OK|NOT OK|Faulty|Check)', log_data, re.IGNORECASE)
-            if fan_statuses:
-                switch_statuses = {}
-                for switch, fan_status in fan_statuses:
-                    if switch not in switch_statuses:
-                        switch_statuses[switch] = []
-                    switch_statuses[switch].append(fan_status.upper())
-                for switch in sorted(switch_statuses.keys(), key=int):
-                    if all(fan_status == 'OK' for fan_status in switch_statuses[switch]):
-                        status.append(['OK'])
-                    else:
-                        non_ok_statuses = [fan_status for fan_status in switch_statuses[switch] if fan_status != 'OK']
-                        if non_ok_statuses:
-                            status.append([non_ok_statuses[0]])
-                        else:
-                            status.append(['Not OK'])
-        else:
-            logging.error("Unsupported version")
-            return ["Unsupported version"]
-        
-        # NEW: normalize shape (flatten single-element lists)
-        status = [s[0] if isinstance(s, list) and len(s) == 1 else s for s in status]
+        logging.info("Starting fan status extraction (IOS only).")
+        # Match either plain "FAN is ..." or numbered "FAN 1 is ..." but exclude PSU fans
+        hits = re.findall(
+            r'^(?:Switch\s+\d+\s+)?FAN(?:\s+\d+)?\s+is\s+([A-Z ]+)$',
+            log_data, re.IGNORECASE | re.MULTILINE
+        )
+        if not hits:
+            logging.debug("No chassis fan lines found.")
+            return ["Not available"]
 
-        logging.debug("Fan status extraction completed.")
-        return status if status else ["Not available"]
+        vals = [h.strip().upper() for h in hits if "PS-" not in h.upper()]
+        vals = ["OK" if v == "GREEN" else v for v in vals]
+
+        return ["OK"] if all(v == "OK" for v in vals) else ["Not OK"]
     except Exception as e:
-        logging.error(f"Error in get_fan_status: {str(e)}")
-        return f"Error in get_fan_status: {str(e)}"
+        logging.error(f"Error in get_fan_status_ios: {str(e)}")
+        return [f"Error: {str(e)}"]
 
-def get_temperature_status(log_data):
+def get_temperature_status(log_data: str):
     try:
-        version = get_current_sw_version(log_data)
-        logging.info("Starting temperature status extraction.")
-        if version.startswith('17'):
-            temperature_status = re.findall(r'SYSTEM (INLET|OUTLET|HOTSPOT)\s+(\d+)\s+(\w+)', log_data)
-            if not temperature_status:
-                logging.debug("No temperature status information found in log data.")
-                return ["Not available"]
-            switch_temps = {}
-            for temp in temperature_status:
-                switch = temp[1]
-                if switch not in switch_temps:
-                    switch_temps[switch] = []
-                switch_temps[switch].append(temp[2])
-            result = []
-            for switch, temps in switch_temps.items():
-                result.append('OK' if all(temp.upper() == 'GREEN' for temp in temps) else 'Not OK')
-            logging.debug("Temperature status extraction completed.")
-            return result if result else ["Not available"]
-        elif version.startswith('16'):
-            # Parse exactly as before
-            temperature_status = re.findall(r'Switch (\d+): SYSTEM TEMPERATURE is (.+)', log_data)
-            if not temperature_status:
-                logging.debug("No temperature status information found in log data.")
-                return ["Not available"]
+        logging.info("Starting temperature status extraction (IOS only).")
 
-            # NEW: aggregate per switch to mirror 17.x final shape (one status per switch)
-            per_switch = {}
-            for switch_str, status_text in temperature_status:
-                sw = int(switch_str)
-                status = status_text.strip().upper()
-                # Logic-equivalent: a switch is OK iff the line says OK
-                # (If multiple lines per switch ever appear, we AND them: all must be OK)
-                current = per_switch.get(sw, True)
-                per_switch[sw] = current and (status == 'OK')
+        # 1) Lines like "TEMPERATURE is OK" or "Switch 1: SYSTEM TEMPERATURE is OK"
+        hits1 = re.findall(
+            r'^(?:Switch\s+\d+\s*:?\s*)?(?:SYSTEM\s+)?TEMPERATURE\s+is\s+([A-Z ]+)\s*$',
+            log_data, re.IGNORECASE | re.MULTILINE
+        )
 
-            # Emit one entry per switch, ordered
-            result = ['OK' if per_switch[sw] else 'Not OK' for sw in sorted(per_switch.keys())]
-            logging.debug("Temperature status extraction completed.")
-            return result if result else ["Not available"]
-        else:
-            logging.error("Unsupported version")
-            return ["Unsupported version"]
+        # 2) Lines like "Temperature State: GREEN"
+        hits2 = re.findall(
+            r'^Temperature\s+State\s*:\s*([A-Z]+)\s*$',
+            log_data, re.IGNORECASE | re.MULTILINE
+        )
+
+        if not hits1 and not hits2:
+            logging.debug("No temperature lines found.")
+            return ["Not available"]
+
+        # Normalize to OK/Not OK
+        def norm(s):
+            s = s.strip().upper()
+            if s in ("OK", "GREEN"):
+                return "OK"
+            # treat common non-OKs
+            if s in ("NOT OK", "CRITICAL", "YELLOW", "RED", "FAIL", "FAILED", "ALARM"):
+                return "Not OK"
+            # default: if it's not obviously OK, consider it Not OK
+            return "Not OK"
+
+        vals = [norm(v) for v in hits1] + [norm(v) for v in hits2]
+
+        return ["OK"] if vals and all(v == "OK" for v in vals) else ["Not OK"]
+
     except Exception as e:
-        logging.error(f"Error in get_temperature_status: {str(e)}")
-        return f"Error in get_temperature_status: {str(e)}"
+        logging.error(f"Error in get_temperature_status_ios: {e}")
+        return [f"Error: {e}"]
 
 def get_power_supply_status(log_data):
     try:
@@ -746,7 +760,7 @@ def get_available_ports(log_data):
 def get_half_duplex_ports(log_data):
     try:
         logging.info("Starting half duplex ports extraction.")
-        current_stack_size = IOS_XE_Stack_Switch.stack_size(log_data)
+        current_stack_size = IOS_Stack_Switch.stack_size(log_data)
         match = re.findall(r"^(\S+).*a-half.*$", log_data, re.IGNORECASE | re.MULTILINE)
         if match:
             switch_interfaces = {}
@@ -776,7 +790,7 @@ def get_half_duplex_ports(log_data):
 def get_interface_remark(log_data):
     try:
         logging.info("Starting interface remark extraction.")
-        current_stack_size = IOS_XE_Stack_Switch.stack_size(log_data)
+        current_stack_size = IOS_Stack_Switch.stack_size(log_data)
         match = re.findall(r"^(\S+).*a-half.*$", log_data, re.IGNORECASE | re.MULTILINE)
         if match:
             switch_interfaces = {}
@@ -803,7 +817,7 @@ def get_interface_remark(log_data):
     except Exception as e:
         logging.error(f"Error in get_interface_remark: {str(e)}")
         # Preserve original error signaling shape (list-of-lists)
-        return [[f"Error in get_interface_remark: {str(e)}"]] * IOS_XE_Stack_Switch.stack_size(log_data)
+        return [[f"Error in get_interface_remark: {str(e)}"]] * IOS_Stack_Switch.stack_size(log_data)
 
 def get_nvram_config_update(log_data):
     try:
@@ -857,7 +871,7 @@ def print_data(data):
         logging.error(f"Error in print_data: {str(e)}")
         # print(f"Error in print_data: {str(e)}")
 
-def process_file(file_path):
+def process_file(file_path: str):
     try:
         logging.info(f"Starting processing of file: {file_path}")
         with open(file_path, 'r') as file:
@@ -923,8 +937,8 @@ def process_file(file_path):
             total_flash, used_flash, free_flash, flash_utilization = [], [], [], []
             avail_free, duplex, interface_remark, config_status, config_date = [], [], [], [], []
             
-            current_stack_size = IOS_XE_Stack_Switch.stack_size(log_data)  # ← FIXED: Renamed variable to avoid shadowing
-            stack_switch_data = IOS_XE_Stack_Switch.parse_ios_xe_stack_switch(log_data)
+            current_stack_size = IOS_Stack_Switch.stack_size(log_data)  # ← FIXED: Renamed variable to avoid shadowing
+            stack_switch_data = IOS_Stack_Switch.parse_IOS_Stack_Switch(log_data)
             flash_memory_details = get_flash_info(log_data)
             
             for item in range(current_stack_size):  # ← FIXED: Use renamed variable
@@ -1156,13 +1170,14 @@ def _placeholder_entry(file_path, reason_text="Non-IOS_XE"):
 
 def main():
     try:
-        file_path = r""
-        # directory_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR136818637\CBJ_SVR136818637\New Folder"
+        file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\3750\UOBM-C3750-JOT-L03-03_10.31.99.12.txt"
+        directory_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Desktop\Live Updates\Uptime\Tickets-Mostly PM\R&S\SVR137436091\3750"
         data = process_file(file_path)
         print_data(data)
         # for item in data:
-        #     # print(item["Interface ip address"])
-        #     print_data(item)
+        #     print(item["File name"])
+        #     print(item["Temperature status"])
+            # print_data(item)
         # pp.pprint(data["Interface ip address"])
     except Exception as e:
         print(f"Error in main: {str(e)}")

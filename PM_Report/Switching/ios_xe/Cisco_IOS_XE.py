@@ -3,8 +3,10 @@ import os
 import logging
 import datetime  # ← ADDED: Missing import
 import pprint as pp
-# from . 
-import IOS_XE_Stack_Switch
+try:
+    from . import IOS_XE_Stack_Switch
+except:
+    import IOS_XE_Stack_Switch
     
 # Static strings
 NA = "Not available"
@@ -139,7 +141,8 @@ def get_hostname(log_data):
 def get_model_number(log_data):
     try:
         logging.info("Starting model number search.")
-        match = re.search(r"Model Number\s+:\s+(\S+)", log_data)
+        # Match 'Model Number' or 'Model number' (case-insensitive) with variable spaces
+        match = re.search(r"Model\s+Number\s*:\s*(\S+)", log_data, re.IGNORECASE)
         logging.debug("Model number search completed.")
         return match.group(1) if match else "Require Manual Check"
     except Exception as e:
@@ -200,7 +203,8 @@ def get_ip_address(file_path):
 def get_serial_number(log_data):
     try:
         logging.info("Starting serial number search.")
-        match = re.search(r"System Serial Number\s+:\s+(\S+)", log_data)
+        # Make it case-insensitive and handle spaces
+        match = re.search(r"System\s+Serial\s+Number\s*:\s*(\S+)", log_data, re.IGNORECASE)
         logging.debug("Serial number search completed.")
         return match.group(1) if match else "Require Manual Check"
     except Exception as e:
@@ -268,12 +272,23 @@ def get_current_sw_version(log_data):
 def get_last_reboot_reason(log_data):
     try:
         logging.info("Starting last reboot reason search.")
-        match = re.search(r"Last reload reason:\s+(.+)", log_data)
+        
+        # First try to match "Last reload reason"
+        match = re.search(r"Last reload reason\s*:\s*(.+)", log_data, re.IGNORECASE)
+        if match:
+            result = match.group(1).strip()
+        else:
+            # Fallback: match "System returned to ROM by ..."
+            match = re.search(r"System returned to ROM by\s+(.+)", log_data, re.IGNORECASE)
+            result = match.group(1).strip() if match else "Require Manual Check"
+        
         logging.debug("Last reboot reason search completed.")
-        return match.group(1) if match else "Require Manual Check"
+        return result
+
     except Exception as e:
         logging.error(f"Error in get_last_reboot_reason: {str(e)}")
         return f"Error in get_last_reboot_reason: {str(e)}"
+
 
 def get_cpu_utilization(log_data):
     try:
@@ -429,28 +444,64 @@ def calculate_flash_utilization(available_bytes, used_bytes):
 def get_flash_info(log_data):
     try:
         logging.info("Starting flash info extraction.")
-        total_flashes = re.findall(r"show\s+flash(?:-\d+)?:\s*all", log_data)
         flash_information = {}
-        if total_flashes:
-            for item in total_flashes:
-                start_index = re.search(item, log_data)
-                if start_index:
-                    end_index = re.search(r"show\s", log_data[start_index.span()[1]:])
-                    if end_index:
-                        flash_data = log_data[start_index.span()[1]:start_index.span()[1] + end_index.span()[0]]
-                        m = re.findall(r'^\s*(\d+)\s+bytes\s+available\s+\((\d+)\s+bytes\s+used\)', flash_data, re.MULTILINE)
-                        if m:
-                            for available_str, used_str in m:
-                                available_bytes = int(available_str)
-                                used_bytes = int(used_str)
-                                total, used, free, utilization = calculate_flash_utilization(available_bytes, used_bytes)
-                                flash_number = re.findall(r'\d+', item)
-                                key = flash_number[0] if flash_number else '1'
-                                flash_information[key] = [total, used, free, utilization]
-            logging.debug("Flash info extraction completed.")
-            return flash_information if flash_information else "No flash information found"
-        logging.debug("No flash info found in log data.")
-        return "No flash information found"
+
+        # Match header lines like: "------------------ show flash: all ------------------"
+        header_iter = list(re.finditer(
+            r'^\s*-{2,}\s*show\s+flash(?:[-:]?\s*(\d+))?\s*:?(?:\s*all)?\s*-{2,}\s*$',
+            log_data, flags=re.IGNORECASE | re.MULTILINE
+        ))
+        if not header_iter:
+            logging.debug("No flash headers found in log data.")
+            return "No flash information found"
+
+        # Find positions of ANY show-section header to bound sections
+        all_header_iter = list(re.finditer(
+            r'^\s*-{2,}\s*show\b.*?-{2,}\s*$',
+            log_data, flags=re.IGNORECASE | re.MULTILINE
+        ))
+        all_header_positions = [m.start() for m in all_header_iter]
+
+        for hdr in header_iter:
+            start = hdr.end()
+            next_pos = next((p for p in all_header_positions if p > start), None)
+            end = next_pos if next_pos is not None else len(log_data)
+            section = log_data[start:end]
+
+            # Pattern A: "NNN bytes available (MMM bytes used)"
+            m_avail_used = re.search(
+                r'^\s*(\d+)\s+bytes\s+available\s*\(\s*(\d+)\s+bytes\s+used\s*\)\s*$',
+                section, flags=re.IGNORECASE | re.MULTILINE
+            )
+            # Pattern B: "NNN bytes total (MMM bytes free)"
+            m_total_free = re.search(
+                r'^\s*(\d+)\s+bytes\s+total\s*\(\s*(\d+)\s+bytes\s+free\s*\)\s*$',
+                section, flags=re.IGNORECASE | re.MULTILINE
+            )
+
+            if m_avail_used:
+                available_bytes = int(m_avail_used.group(1))
+                used_bytes = int(m_avail_used.group(2))
+            elif m_total_free:
+                total_bytes = int(m_total_free.group(1))
+                free_bytes = int(m_total_free.group(2))
+                available_bytes = free_bytes
+                used_bytes = total_bytes - free_bytes
+            else:
+                # No recognizable summary line in this section
+                continue
+
+            total, used, free, utilization = calculate_flash_utilization(available_bytes, used_bytes)
+
+            # Figure out flash number from header (flash, flash2, flash-3, etc.)
+            num = hdr.group(1)
+            key = num if num else '1'  # keep your original '1' default
+
+            flash_information[key] = [total, used, free, utilization]
+
+        logging.debug("Flash info extraction completed.")
+        return flash_information if flash_information else "No flash information found"
+
     except Exception as e:
         logging.error(f"Error in get_flash_info: {str(e)}")
         return f"Error in get_flash_info: {str(e)}"
@@ -883,11 +934,15 @@ def print_data(data):
         logging.error(f"Error in print_data: {str(e)}")
         # print(f"Error in print_data: {str(e)}")
 
-def process_file(file_path):
+def process_file(file_path, text: str | None = None):
     try:
         logging.info(f"Starting processing of file: {file_path}")
-        with open(file_path, 'r') as file:
-            log_data = file.read()
+        # read only if text not provided
+        if text is None:
+            with open(file_path, 'r', errors='ignore') as file:
+                log_data = file.read()
+        else:
+            log_data = text
         data = {}
         stack = check_stack(log_data)
         # print("STACK:", stack)
