@@ -1,12 +1,10 @@
 import re
 import os
 import logging
-import datetime  # ← ADDED: Missing import
+import datetime
 import pprint as pp
-try:
-    from . import IOS_Stack_Switch
-except:
-    import IOS_Stack_Switch
+
+from . import IOS_Stack_Switch  # strict relative import inside package
     
 # Static strings
 NA = "Not available"

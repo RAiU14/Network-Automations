@@ -9,10 +9,7 @@ from openpyxl.styles import PatternFill, Alignment, Font
 import json  # for export_json
 from tempfile import NamedTemporaryFile
 from openpyxl.utils import get_column_letter
-try:
-    from .Switching.ios_xe import Cisco_IOS_XE
-except ImportError:
-    from PM_Report.Switching.ios_xe import Cisco_IOS_XE
+from .Switching.ios_xe import Cisco_IOS_XE
 
 
 # ----- version banner so you can confirm the right module is loaded -----
