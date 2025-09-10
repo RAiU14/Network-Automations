@@ -597,95 +597,83 @@ def get_temperature_status(log_data: str):
         logging.error(f"Error in get_temperature_status_ios: {e}")
         return [f"Error: {e}"]
 
-def get_power_supply_status(log_data):
+def get_power_supply_status(log_data: str):
+    """
+    IOS classic 'show env all' power-supply parser.
+    Returns a per-switch list like ["OK", "NOT OK"] ordered by switch number.
+    Rules:
+      - Parse the PSU table under the 'SW  PID ... Status ...' header.
+      - Slot labels look like '1A', '1B', etc.
+      - 'OK' = healthy. 'Not Present' is neutral/acceptable.
+      - Any of: Bad, No Input Power, Not OK, Faulty, Fail/Failed => NOT OK.
+      - If no PSU lines found => ["Not available"].
+    """
     try:
-        version = get_current_sw_version(log_data)
-        logging.info("Starting power supply status extraction.")
-        results = []
-        if version.startswith('17'):
-            sensor_list_starts = [m.start() for m in re.finditer(r"Sensor List: Environmental Monitoring", log_data)]
-            if not sensor_list_starts:
-                logging.debug("No sensor list found in log data.")
-                return ["NA: No sensor list found"]
+        logging.info("Starting power supply status extraction (IOS only).")
 
-            for i, start_index in enumerate(sensor_list_starts):
-                switch_block_start = start_index
-                switch_block_end = len(log_data)
-                if i + 1 < len(sensor_list_starts):
-                    switch_block_end = sensor_list_starts[i+1]
+        # Isolate the PSU table after the header 'SW  PID ... Status'
+        m = re.search(
+            r'^\s*SW\s+PID\s+.*?Status.*?\n(-{2,}.*?\n)?(.*?)(?:\n\s*SW\s+Status|^-{10,}\s*show|\Z)',
+            log_data, re.IGNORECASE | re.MULTILINE | re.DOTALL
+        )
+        section = m.group(2) if m else ""
 
-                current_switch_data = log_data[switch_block_start:switch_block_end]
-                alarm_status = "OK"
+        if not section.strip():
+            logging.debug("No PSU table section found.")
+            return ["Not available"]
 
-                sensor_section_match = re.search(r'Sensor List: Environmental Monitoring\s*([\s\S]*?)(?:Switch FAN Speed State Airflow direction|SW\s+PID|$)', current_switch_data, re.DOTALL)
-                if sensor_section_match:
-                    sensor_lines = sensor_section_match.group(1).strip().split('\n')
-                    for line in sensor_lines:
-                        if re.search(r'\s+FAULTY\s+', line):
-                            alarm_status = "Not OK"
-                            break
+        # Collect slot -> status
+        # 1) Minimal "Not Present" rows
+        rows = re.findall(r'^\s*([0-9]+[A-Z])\s+Not\s+Present\s*$', section,
+                          re.IGNORECASE | re.MULTILINE)
+        slot_status = {slot.upper(): "NOT PRESENT" for slot in rows}
 
-                if alarm_status == "OK":
-                    psu_pid_section_match = re.search(r'SW\s+PID.*?(---\s*|$)', current_switch_data, re.DOTALL)
-                    if psu_pid_section_match:
-                        psu_pid_section = psu_pid_section_match.group(0)
-                        if re.search(r'No Input Power|Bad', psu_pid_section):
-                            alarm_status = "ALARM"
-                results.append(alarm_status)
+        # 2) Full rows with a status token somewhere in the line
+        for line in section.splitlines():
+            line_s = line.strip()
+            if not line_s:
+                continue
+            mslot = re.match(r'^([0-9]+[A-Z])\b', line_s, re.IGNORECASE)
+            if not mslot:
+                continue
+            slot = mslot.group(1).upper()
 
-            logging.debug("Power supply status extraction completed.")
-            return results if results else ["Not available"]
+            # Find a status token in the row
+            mstatus = re.search(
+                r'\b(OK|Not\s+Present|No\s+Input\s+Power|Bad|Not\s+OK|Faulty|Fail(?:ed)?)\b',
+                line_s, re.IGNORECASE
+            )
+            if mstatus:
+                status = mstatus.group(1).upper().replace("  ", " ")
+                # Normalize a couple forms
+                status = status.replace("FAILED", "FAIL").replace("NOT  OK", "NOT OK")
+                slot_status[slot] = status
 
-        elif version.startswith('16'):
-            results = {}
-            lines = log_data.strip().split('\n')
-            pdu_line_pattern = re.compile(r'^\s*(\d+)[AB]\s+')
-            pdu_section_header = re.compile(r'SW\s+PID\s+.*Serial#\s+.*Status')
-            pdu_lines_start_index = -1
-            for i, line in enumerate(lines):
-                if pdu_section_header.search(line):
-                    pdu_lines_start_index = i + 2
-                    break
+        if not slot_status:
+            logging.debug("No PSU rows parsed.")
+            return ["Not available"]
 
-            if pdu_lines_start_index != -1:
-                for line in lines[pdu_lines_start_index:]:
-                    if not line.strip() or '------------------' in line:
-                        break
-                    if pdu_line_pattern.match(line):
-                        parts = line.strip().split()
-                        try:
-                            switch_number = int(parts[0][:-1])
-                        except (ValueError, IndexError):
-                            continue
-                        status = "UNKNOWN"
-                        if "Not Present" in line:
-                            status = "Not Present"
-                        elif len(parts) > 3:
-                            status = parts[3].strip()
-                        if switch_number not in results:
-                            results[switch_number] = []
-                        is_ok = (status == "OK" or status == "Not Present")
-                        results[switch_number].append(is_ok)
+        # Aggregate per switch number
+        per_switch = {}
+        for slot, status in slot_status.items():
+            sw = int(slot[:-1])  # '1A' -> 1
+            per_switch.setdefault(sw, []).append(status)
 
-            final_statuses = []
-            if results:
-                sorted_switch_numbers = sorted(results.keys())
-                for switch_num in sorted_switch_numbers:
-                    if len(results.get(switch_num, [])) == 2 and all(results.get(switch_num, [])):
-                        final_statuses.append("OK")
-                    else:
-                        final_statuses.append("NOT OK")
+        crit = {"BAD", "NO INPUT POWER", "NOT OK", "FAULTY", "FAIL"}
+        final = []
+        for sw in sorted(per_switch.keys()):
+            statuses = per_switch[sw]
+            if any(s in crit for s in statuses):
+                final.append("NOT OK")
+            else:
+                # Accept 'NOT PRESENT' as neutral; OK if at least one OK and no criticals
+                final.append("OK" if any(s == "OK" for s in statuses) else "NOT OK")
 
-            logging.debug("Power supply status extraction completed.")
-            return final_statuses if final_statuses else ["Not available"]
-
-        else:
-            logging.error("Unsupported version")
-            return ["Unsupported version"]
+        return final if final else ["Not available"]
 
     except Exception as e:
-        logging.error(f"Error in get_power_supply_status: {str(e)}")
-        return [f"Error in get_power_supply_status: {str(e)}"]
+        logging.error(f"Error in get_power_supply_status_ios: {e}")
+        return [f"Error: {e}"]
 
 def get_debug_status(log_data):
     try:
