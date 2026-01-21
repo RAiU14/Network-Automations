@@ -1,0 +1,7 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+requests>=2.31
+beautifulsoup4>=4.12
+lxml>=5.1
+langdetect>=1.0.9
+pydantic>=2.6
