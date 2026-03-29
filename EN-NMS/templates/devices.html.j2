@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Device List - EN-NMS</title>
+    <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+    <h1>Device List</h1>
+    <table>
+        <tr><th>Name</th><th>IP</th><th>Details</th></tr>
+        {% for id, name, ip in devices %}
+        <tr>
+            <td>{{ name }}</td>
+            <td>{{ ip }}</td>
+            <td><a href="device_{{ id }}.html">View Metrics</a></td>
+        </tr>
+        {% endfor %}
+    </table>
+    <p><a href="index.html">Back to Dashboard</a></p>
+</body>
+</html>

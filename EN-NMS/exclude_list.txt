@@ -1,0 +1,8 @@
+node_modules
+dist
+.git
+.gemini
+venv
+.env
+db/*.db
+package-lock.json

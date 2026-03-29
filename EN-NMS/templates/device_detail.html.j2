@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ name }} - EN-NMS</title>
+    <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+    <h1>{{ name }} ({{ ip }})</h1>
+    <h2>Recent Metrics</h2>
+    <table>
+        <tr><th>Metric</th><th>Value</th><th>Timestamp</th></tr>
+        {% for metric, value, polled_at in metrics %}
+        <tr>
+            <td>{{ metric }}</td>
+            <td>{{ value }}</td>
+            <td>{{ polled_at }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    <p><a href="devices.html">Back to Device List</a></p>
+</body>
+</html>

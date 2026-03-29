@@ -1,0 +1,37 @@
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+.main-content {
+  flex: 1;
+  background: var(--bg-dark);
+  transition: all 0.4s ease;
+}
+
+body.light .main-content {
+  background: var(--bg-light);
+}
+
+.subtitle {
+  font-size: 0.9rem;
+  opacity: 0.7;
+  font-weight: 500;
+  margin-top: 0.5rem;
+}
+
+/* Page Transitions */
+.animate-fade {
+  animation: fadeIn 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(15px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 768px) {
+  .main-content {
+    padding-left: 0;
+  }
+}

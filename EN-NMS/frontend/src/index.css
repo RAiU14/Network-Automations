@@ -1,0 +1,97 @@
+:root {
+  /* Semantic High-Contrast Palette */
+  --hue: 220;
+  
+  /* Root Defaults (Dark Mode) */
+  --color-bg: hsl(var(--hue), 25%, 8%);
+  --color-card: hsla(var(--hue), 25%, 15%, 0.8);
+  --color-text: #ffffff;
+  --color-text-secondary: hsl(var(--hue), 15%, 75%);
+  --color-border: hsla(var(--hue), 15%, 35%, 0.6);
+  --color-grid: hsla(0, 0%, 100%, 0.1); /* Visible grid lines in dark */
+  
+  --accent: hsl(210, 100%, 50%);
+  --accent-glow: hsla(210, 100%, 50%, 0.3);
+  --glass: blur(12px) saturate(160%);
+}
+
+body.light {
+  /* Root Overrides (Light Mode) */
+  --color-bg: hsl(var(--hue), 15%, 98%);
+  --color-card: hsla(var(--hue), 25%, 95%, 0.9);
+  --color-text: #1a1a1a;
+  --color-text-secondary: #4a4a4a;
+  --color-border: hsla(var(--hue), 20%, 80%, 0.8);
+  --color-grid: hsla(0, 0%, 0%, 0.08); /* Visible grid lines in light */
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  overflow-x: hidden;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+/* Glassmorphism Logic */
+.glass {
+  background: var(--color-card);
+  backdrop-filter: var(--glass);
+  -webkit-backdrop-filter: var(--glass);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 8px 32px hsla(0, 0%, 0%, 0.1);
+}
+
+h1, h2, h3 {
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--color-text);
+}
+
+.subtitle {
+  color: var(--color-text-secondary);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+/* Common Components Adaptation */
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  font-family: inherit;
+  color: var(--color-text);
+}
+
+.loader {
+  padding: 3rem;
+  text-align: center;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade {
+  animation: fadeIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 10px;
+}

@@ -1,0 +1,118 @@
+.inventory-container {
+  padding-left: 270px;
+  padding-right: 2rem;
+  padding-top: 2rem;
+  max-width: calc(100vw - 250px);
+}
+
+.inventory-header {
+  margin-bottom: 2.5rem;
+}
+
+.device-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 2rem;
+  padding-bottom: 3rem;
+}
+
+.device-card {
+  border-radius: 24px;
+  padding: 1.8rem;
+  transition: all 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  box-shadow: 0 15px 40px hsla(0, 0%, 0%, 0.1);
+}
+
+.device-card:hover {
+  transform: translateY(-8px);
+  border-color: var(--accent);
+  box-shadow: 0 25px 60px hsla(0, 0%, 0%, 0.2);
+}
+
+.card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.device-icon {
+  background: var(--color-border);
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  font-size: 1.25rem;
+  color: var(--accent);
+}
+
+.status-badge {
+  font-size: 0.75rem;
+  font-weight: 800;
+  padding: 0.4rem 0.8rem;
+  border-radius: 10px;
+  text-transform: uppercase;
+}
+
+.status-badge.active { background: hsla(150, 80%, 40%, 0.2); color: #10b981; }
+.status-badge.inactive { background: hsla(0, 80%, 40%, 0.2); color: #ef4444; }
+
+.card-body h2 {
+  font-size: 1.5rem;
+  font-weight: 800;
+  margin-bottom: 0.25rem;
+  color: var(--color-text);
+}
+
+.device-ip {
+  color: var(--color-text-secondary);
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.device-meta {
+  display: flex;
+  gap: 1.5rem;
+  margin-top: auto;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.meta-item .label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.meta-item .value {
+  font-weight: 800;
+  font-size: 1rem;
+  color: var(--accent);
+}
+
+.card-footer {
+  margin-top: 1rem;
+}
+
+.details-btn {
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: var(--accent);
+}
+
+@media (max-width: 768px) {
+  .inventory-container {
+    padding-left: 80px;
+  }
+}

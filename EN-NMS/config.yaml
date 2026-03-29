@@ -1,0 +1,23 @@
+mock_mode: true
+
+devices:
+  - name: "Mock-Router"
+    ip: "127.0.0.1"
+    snmp_community: "public"
+    snmp_version: 2
+    is_active: true
+
+polling:
+  interval: 60
+  timeout: 5
+  retries: 2
+  max_concurrent: 10
+
+database:
+  path: "db/nms.db"
+
+static:
+  output_dir: "static"
+
+templates:
+  dir: "templates"
