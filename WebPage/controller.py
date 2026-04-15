@@ -10,19 +10,12 @@ import zipfile
 from typing import Dict, Any
 from pathlib import Path
 
-# Setup paths
+# current file’s directory (Webpage/)
 current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-pm_report_dir = os.path.join(parent_dir, 'PM_Report')
-eox_dir = os.path.join(parent_dir, 'EOX')
-
-if os.path.exists(pm_report_dir):
-    sys.path.insert(0, pm_report_dir)
-if os.path.exists(eox_dir):
-    sys.path.insert(0, eox_dir)
+# project root (Cisco_Automations/)
+root_dir = os.path.dirname(current_dir)
 
 # Setup logging
-root_dir = os.path.dirname(current_dir)
 log_dir = os.path.join(root_dir, "Logs")
 os.makedirs(log_dir, exist_ok=True)
 
@@ -32,31 +25,37 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-# Import modules
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]  # .../Cisco_Automations
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 try:
-    import Cisco_EOX
-    import Switching.Cisco_IOS_XE as Cisco_IOS_XE
-    import Switching.Data_to_Excel as Data_to_Excel
+    # import strictly as packages
+    from PM_Report import pipeline, Data_to_Excel
+    from EOX import Cisco_EOX
     logging.info("All modules imported successfully")
 except ImportError as e:
     logging.error(f"Module import failed: {e}")
-    
+
+    # fallback mock to keep flows usable
     class MockModule:
         @staticmethod
         def eox_tes():
             logging.warning("Mock EOX test - real module not available")
             return "Mock test completed"
-        
+
         @staticmethod
         def request_EOX_data_from_online(excel_file_path, technology):
             logging.warning("Mock EOX processing - real module not available")
             return True
-        
+
         @staticmethod
         def sub_controller(data, unique_pid, technology):
             logging.warning("Mock sub_controller - real module not available")
             return data
-    
+
     if 'Cisco_EOX' not in globals():
         Cisco_EOX = MockModule()
 
@@ -239,11 +238,20 @@ def extract_zip_flatten_structure(zip_file_path: str, ticket: str = None):
         return {'success': False, 'error': f'Extraction error: {str(e)}'}
 
 def check_module_availability():
-    """Check which modules are available"""
+    """Check which modules + required functions are available"""
+    pipeline_ok = 'pipeline' in globals() and hasattr(pipeline, 'extract')
+    d2x_ok = 'Data_to_Excel' in globals() and all(
+        hasattr(Data_to_Excel, fn)
+        for fn in ('append_to_excel', 'process_and_style_excel', 'unique_model_numbers_and_serials')
+    )
+    eox_ok = 'Cisco_EOX' in globals() and all(
+        hasattr(Cisco_EOX, fn)
+        for fn in ('eox_tes', 'request_EOX_data_from_online', 'sub_controller')
+    )
     return {
-        'Cisco_IOS_XE': hasattr(Cisco_IOS_XE, 'process_directory') if 'Cisco_IOS_XE' in globals() else False,
-        'Data_to_Excel': hasattr(Data_to_Excel, 'append_to_excel') if 'Data_to_Excel' in globals() else False,
-        'Cisco_EOX': hasattr(Cisco_EOX, 'eox_tes') if 'Cisco_EOX' in globals() else False,
+        'pipeline': pipeline_ok,
+        'Data_to_Excel': d2x_ok,
+        'Cisco_EOX': eox_ok,
         'extract_zip_flatten_structure': True
     }
 
@@ -363,17 +371,16 @@ def process_upload(request_data: Dict[str, Any], file_obj, upload_folder: str, o
         # Clean up old extraction directories to prevent disk space issues
         cleanup_old_extractions(ticket_folder, ticket)
         
-        # Process with Cisco_IOS_XE
-        if not modules['Cisco_IOS_XE']:
-            logging.error("Cisco_IOS_XE module unavailable")
+        # Process with pipeline
+        if not modules['pipeline']:
+            logging.error("pipeline module unavailable")
             return False
-            
+
         try:
-            data = Cisco_IOS_XE.process_directory(extraction_result['extract_path'])
-            # Data will now have all the processed information from the log file.
-            logging.info("Cisco_IOS_XE processing completed successfully")
+            data = pipeline.extract(extraction_result['extract_path'])
+            logging.info("pipeline processing completed successfully")
         except Exception as e:
-            logging.error(f"Cisco_IOS_XE processing failed: {e}")
+            logging.error(f"pipeline processing failed: {e}")
             return False
         
         # Excel processing

@@ -186,7 +186,7 @@ class CiscoLogProcessor:
 
 def main():
     # For a single file
-    file_path = r"Log_samples\9200 switch.txt"
+    file_path = r""
     processor = CiscoLogProcessor("")
     data = processor.process_file(file_path)
     processor.print_data(data)
