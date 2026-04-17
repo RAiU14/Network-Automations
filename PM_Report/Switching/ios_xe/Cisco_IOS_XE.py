@@ -2,8 +2,7 @@ import re
 import os
 import logging
 import datetime
-import pprint as pp
-
+from typing import List, Dict, Union
 from . import IOS_XE_Stack_Switch
     
 # Static strings
@@ -38,11 +37,6 @@ _IP_LINE_RE = re.compile(
 _IP_RE = re.compile(r'^\s*(\d+)\.(\d+)\.(\d+)\.(\d+)\s*$')
 
 def sanitize_ipv4(value: str) -> str:
-    """
-    Return a normalized IPv4 (no leading zeros, stripped), or:
-      - "Require Manual Check" if clearly malformed
-      - "Not available" if empty-ish
-    """
     if value is None:
         return "Not available"
     s = str(value).strip()
@@ -68,13 +62,6 @@ def sanitize_ipv4(value: str) -> str:
     return s_norm
 
 def get_ip(log_data: str):
-    """
-    Management IP selection priority inside config:
-      1) iface name/description contains mgmt|manage|management
-      2) LoopbackX
-      3) Vlan 1
-    Skips DHCP stanzas. Returns normalized IPv4 or None.
-    """
     try:
         if not log_data:
             return None
@@ -126,141 +113,696 @@ def log_type(log_data):
         logging.error("Invalid input type for log_data")
         return f"Not a .txt or.log file"
 
-def get_hostname(log_data):
+def get_hostname(log_data: str) -> str:
     try:
-        logging.info("Starting hostname search.")
-        match = re.search(r"hostname\s+(\S+)", log_data)
-        logging.debug("Category Search Completed.")
-        return match.group(1) if match else "Require Manual Check"
-    except Exception as e:
-        logging.debug("Category Search failed - hostname not found in log.")
-        return f"Require Manual Check"
+        if not isinstance(log_data, str) or not log_data:
+            return "Require Manual Check"
+
+        m = re.search(r"(?im)^\s*hostname\s+([A-Za-z0-9][A-Za-z0-9._-]*)\s*$", log_data)
+        if m:
+            return m.group(1).strip()
+
+        m = re.search(r"(?im)^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s+uptime\s+is\s+.+$", log_data)
+        if m:
+            return m.group(1).strip()
+
+        for pat in (
+            r"(?im)^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*[>#]\s*(?:sh|sho|show)\b",
+            r"(?im)^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*[>#]\s*(?:term(?:inal)?\s+len|terminal\s+length)\b",
+        ):
+            m = re.search(pat, log_data)
+            if m:
+                return m.group(1).strip()
+
+        return "Require Manual Check"
+    except Exception:
+        return "Require Manual Check"
 
 def get_model_number(log_data):
     try:
-        logging.info("Starting model number search.")
-        # Match 'Model Number' or 'Model number' (case-insensitive) with variable spaces
-        match = re.search(r"Model\s+Number\s*:\s*(\S+)", log_data, re.IGNORECASE)
-        logging.debug("Model number search completed.")
-        return match.group(1) if match else "Require Manual Check"
+        logging.info("Starting model number extraction.")
+        
+        # --- Method 1: Show version Model Number ---
+        sv_model = None
+        logging.debug("Attempting extraction via 'show version' patterns.")
+        try:
+            patterns = [
+                r"Model\s+Number\s*:\s*([^\s\r\n]+)",
+                r"Product\s+ID\s*:\s*([^\s\r\n]+)", 
+                r"Model\s*:\s*([^\s\r\n]+)",
+                r"Hardware\s*:\s*([^\s\r\n,]+)"
+            ]
+            
+            for i, pattern in enumerate(patterns):
+                match = re.search(pattern, log_data, re.IGNORECASE)
+                if match:
+                    model = match.group(1).strip()
+                    if model and model.upper() not in ['N/A', 'NONE', 'UNKNOWN']:
+                        sv_model = model
+                        logging.debug(f"Found show version model using pattern {i+1}: {sv_model}")
+                        break
+                    else:
+                        logging.debug(f"Pattern {i+1} matched, but value was empty/generic ('{model}').")
+                else:
+                    logging.debug(f"Pattern {i+1} did not match.")
+        except Exception as e:
+            logging.debug(f"Error extracting show version model: {e}")
+        
+        # --- Method 2: Extract inventory section ---
+        inventory_section = None
+        logging.debug("Attempting to extract 'show inventory' section.")
+        try:
+            inv_match = re.search(r"-{5,}\s*show\s+inventory\s*-{5,}", log_data, re.IGNORECASE)
+            if inv_match:
+                start_pos = inv_match.end()
+                # Find end of inventory section
+                end_match = re.search(r"-{5,}", log_data[start_pos:], re.IGNORECASE)
+                if end_match:
+                    inventory_section = log_data[start_pos:start_pos + end_match.start()]
+                    logging.debug("Extracted 'show inventory' section with clear end marker.")
+                else:
+                    inventory_section = log_data[start_pos:]
+                    logging.debug("Extracted 'show inventory' section to end of log data.")
+            else:
+                logging.debug("Show inventory section header not found.")
+        except Exception as e:
+            logging.debug(f"Error extracting inventory section: {e}")
+        
+        # --- Method 3: Parse inventory for device PIDs ---
+        inventory_model = None
+        if inventory_section:
+            logging.debug("Starting inventory parsing and device prioritization.")
+            try:
+                # Device priority for model selection
+                device_priorities = {
+                    'switch_system': 100,     # Switch System - main chassis
+                    'switch_stack': 95,       # Stack, c93xx Stack
+                    'switch_numbered': 90,    # Switch 1, Switch 2
+                    'switch_other': 80,       # Other switch devices  
+                    'chassis': 70,            # Chassis devices
+                    'supervisor': 60,         # Supervisor modules
+                    'linecard': 30,           # Line cards
+                    'transceiver': 20,        # SFPs, transceivers
+                    'power_fan': 10,          # Power supplies, fans
+                    'unknown': 0
+                }
+                
+                inventory_devices = []
+                
+                # Different inventory patterns to handle various formats
+                inventory_patterns = [
+                    # Format: NAME: "device name" ... PID: model
+                    r'(?ims)NAME:\s*"([^"]+)".*?\bPID:\s*([^\s,\n\r]+)',
+                    # Format: NAME device name ... PID model (without quotes)  
+                    r'(?ims)NAME:\s*([^,\n]+?).*?\bPID:\s*([^\s,\n\r]+)',
+                    # Legacy format variations
+                    r'(?ims)NAME:\s*"([^"]+)"[^\n]*\nPID:\s*([^\s,]+)'
+                ]
+                
+                for i, pattern in enumerate(inventory_patterns):
+                    matches = re.findall(pattern, inventory_section)
+                    logging.debug(f"Pattern {i+1} yielded {len(matches)} inventory matches.")
+                    for name, pid in matches:
+                        name = name.strip().strip('"')
+                        pid = pid.strip()
+                        name_lower = name.lower()
+                        
+                        # Skip invalid PIDs
+                        if not pid or pid.upper() in ['UNSPECIFIED', 'N/A', 'NONE', 'UNKNOWN']:
+                            logging.debug(f"Skipping inventory item (generic PID): {name} - {pid}")
+                            continue
+                        
+                        # Skip obvious non-model components
+                        if any(x in name_lower for x in ['transceiver', 'sfp', 'gbic', 'fan', 'power', 'cable']):
+                            logging.debug(f"Skipping inventory item (component): {name} - {pid}")
+                            continue
+                        
+                        # Classify device type and assign priority
+                        device_type = 'unknown'
+                        priority = 0
+                        
+                        # Switch devices (highest priority)
+                        if 'switch' in name_lower:
+                            if 'system' in name_lower:
+                                device_type = 'switch_system'
+                                priority = device_priorities['switch_system']
+                            elif any(x in name_lower for x in ['stack', 'c93xx']):
+                                device_type = 'switch_stack'
+                                priority = device_priorities['switch_stack']
+                            elif re.search(r'switch\s*\d+', name_lower):
+                                device_type = 'switch_numbered'
+                                priority = device_priorities['switch_numbered']
+                                # Boost priority for Switch 1
+                                if 'switch 1' in name_lower or 'switch  1' in name_lower:
+                                    priority += 5
+                            else:
+                                device_type = 'switch_other'
+                                priority = device_priorities['switch_other']
+                        
+                        # Chassis devices
+                        elif 'chassis' in name_lower:
+                            # Avoid line-cards like "Chassis 1 1" 
+                            if re.search(r'chassis\s*\d+\b(?!\s*\d)', name_lower):
+                                device_type = 'chassis'
+                                priority = device_priorities['chassis']
+                                # Boost priority for Chassis 1
+                                if 'chassis 1' in name_lower or 'chassis  1' in name_lower:
+                                    priority += 5
+                        
+                        # Supervisor modules
+                        elif any(x in name_lower for x in ['supervisor', 'sup ']):
+                            device_type = 'supervisor'
+                            priority = device_priorities['supervisor']
+                        
+                        # Line cards
+                        elif any(x in name_lower for x in ['linecard', 'line card']):
+                            device_type = 'linecard'
+                            priority = device_priorities['linecard']
+                        
+                        # Add to devices if it has valid priority
+                        if priority > 0:
+                            inventory_devices.append({
+                                'name': name,
+                                'pid': pid,
+                                'device_type': device_type,
+                                'priority': priority
+                            })
+                            logging.debug(f"Identified device: {name} (PID: {pid}, Type: {device_type}, Pri: {priority})")
+                
+                # Select highest priority device model
+                if inventory_devices:
+                    logging.debug(f"Total relevant inventory devices found: {len(inventory_devices)}. Sorting by priority.")
+                    # Sort by priority (highest first), then by name for consistency
+                    inventory_devices.sort(key=lambda x: (-x['priority'], x['name']))
+                    
+                    # Special handling for multiple switches with same PID
+                    switch_devices = [d for d in inventory_devices if d['device_type'].startswith('switch')]
+                    if len(switch_devices) > 1:
+                        switch_pids = set(d['pid'] for d in switch_devices)
+                        if len(switch_pids) == 1:
+                            # All switches have same PID - use it
+                            inventory_model = next(iter(switch_pids))
+                            logging.info(f"Inventory: All switches have same PID: {inventory_model}")
+                        else:
+                            # Mixed PIDs - prefer Switch 1, Switch System, or highest priority
+                            switch_1 = next((d for d in switch_devices if '1' in d['name'] or 'system' in d['name'].lower()), None)
+                            if switch_1:
+                                inventory_model = switch_1['pid']
+                                logging.info(f"Inventory: Using primary switch PID: {switch_1['name']} ({inventory_model})")
+                            else:
+                                # Use highest priority switch
+                                inventory_model = switch_devices[0]['pid']
+                                logging.info(f"Inventory: Using highest priority switch: {switch_devices[0]['name']} ({inventory_model})")
+                    else:
+                        # Single switch or no switches - use highest priority device
+                        selected_device = inventory_devices[0]
+                        inventory_model = selected_device['pid']
+                        logging.info(f"Inventory: Selected highest priority device: {selected_device['name']} ({inventory_model})")
+                
+                # Legacy fallback: Look specifically for Switch N patterns
+                if not inventory_model:
+                    logging.debug("No model selected via main inventory logic. Trying legacy Switch N pattern.")
+                    switch_pattern = r'NAME:\s*"Switch\s*(\d+)"[^\n]*\nPID:\s*([^\s,]+)'
+                    switch_matches = re.findall(switch_pattern, inventory_section, re.IGNORECASE)
+                    if switch_matches:
+                        switch_pids = {int(num): pid.strip() for num, pid in switch_matches}
+                        pid_values = set(switch_pids.values())
+                        
+                        if len(pid_values) == 1:
+                            # All Switch N have same PID
+                            inventory_model = next(iter(pid_values))
+                            logging.info(f"Legacy: All Switch N have same PID: {inventory_model}")
+                        elif 1 in switch_pids:
+                            # Mixed PIDs - prefer Switch 1
+                            inventory_model = switch_pids[1]
+                            logging.info(f"Legacy: Using Switch 1 PID: {inventory_model}")
+                        else:
+                            # Use first available switch
+                            first_switch = min(switch_pids.keys())
+                            inventory_model = switch_pids[first_switch]
+                            logging.info(f"Legacy: Using Switch {first_switch} PID: {inventory_model}")
+                        
+            except Exception as e:
+                logging.debug(f"Error parsing inventory models: {e}")
+        
+        # --- Determine final model ---
+        final_model = None
+        
+        # Priority: Inventory model > Show version model
+        if inventory_model:
+            final_model = inventory_model
+            logging.info(f"Using inventory model: {final_model}")
+            
+            # Compare with show version - if different, prefer inventory
+            if sv_model and sv_model.strip().upper() != inventory_model.strip().upper():
+                logging.info(f"Inventory model ({inventory_model}) differs from show version ({sv_model}), using inventory")
+            elif sv_model and sv_model.strip().upper() == inventory_model.strip().upper():
+                logging.info(f"Inventory and show version models match: {final_model}")
+            else:
+                logging.info(f"Using inventory model: {final_model}.")
+                
+        elif sv_model:
+            final_model = sv_model
+            logging.info(f"Using show version model: {final_model}")
+        
+        logging.info(f"Final model: {final_model}")
+        return final_model or "Require Manual Check"
+        
     except Exception as e:
-        logging.error(f"Error in get_model_number: {str(e)}")
-        return f"Require Manual Check"
+        logging.error(f"Error in get_model_number: {e}")
+        return "Require Manual Check"
 
 def get_ip_address(file_path):
-    """
-    Enhanced: strict IPv4 validation + content fallback using sanitize_ipv4.
-    Returns a tuple: (file_name, ip_or_status_string).
-    """
     try:
         logging.info("Starting IP address extraction from file path.")
         file_name = os.path.basename(file_path) if isinstance(file_path, str) else str(file_path)
+        logging.debug(f"Target file name is: {file_name}")
 
         # 1) Filename-first: collect candidates, return the first that sanitizes cleanly
+        logging.debug("Attempting to find IP address within the filename.")
         filename_candidates = re.findall(r"(\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?)", file_name)
+        logging.debug(f"Found {len(filename_candidates)} candidates in filename.")
+
         for cand in filename_candidates:
             ip_norm = sanitize_ipv4(cand)
             if ip_norm not in {"Not available", "Require Manual Check"}:
-                logging.debug(f"IP found in filename: {ip_norm}")
+                logging.info(f"Successfully extracted and sanitized IP from filename: {ip_norm}")
                 return (file_name, ip_norm)
+            logging.debug(f"Skipping filename candidate '{cand}' as invalid after sanitization.")
+        
+        logging.debug("No valid IP address found in filename. Proceeding to file content.")
 
         # 2) Content fallback (only if needed)
         try:
             with open(file_path, "r", errors="ignore") as f:
                 log_data = f.read()
+            logging.debug(f"Successfully read file content ({len(log_data)} chars) for content search.")
 
             # Find all IPv4-ish tokens (allowing optional CIDR), sanitize each, pick first valid
             content_candidates = re.findall(r"(\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?)", log_data)
+            logging.debug(f"Found {len(content_candidates)} candidates in file content.")
+
             for cand in content_candidates:
                 ip_norm = sanitize_ipv4(cand)
                 if ip_norm not in {"Not available", "Require Manual Check"}:
-                    logging.debug(f"IP found in file content: {ip_norm}")
+                    logging.info(f"Successfully extracted and sanitized IP from file content: {ip_norm}")
                     return (file_name, ip_norm)
+                logging.debug(f"Skipping content candidate '{cand}' as invalid after sanitization.")
+
+            logging.debug("No valid IP address found via simple regex scan of content. Trying helper function.")
 
             # --- Last chance: call existing get_ip helper if available ---
             try:
                 from_content = get_ip(log_data)
+                logging.debug(f"Result from get_ip helper: {from_content}")
+
                 ip_norm = sanitize_ipv4(from_content)
                 if ip_norm not in {"Not available", "Require Manual Check"}:
-                    logging.debug(f"IP found via get_ip helper: {ip_norm}")
+                    logging.info(f"Successfully extracted and sanitized IP via get_ip helper: {ip_norm}")
                     return (file_name, ip_norm)
+                logging.debug(f"get_ip helper result was invalid after final sanitization.")
+            except NameError:
+                 logging.warning(f"get_ip helper is not defined, skipping final content check for {file_name}.")
             except Exception as e:
+                # LOGGING PRESENT: Helper function failure
                 logging.warning(f"get_ip helper failed on {file_name}: {e}")
 
         except Exception as inner:
             logging.warning(f"Content fallback failed while reading {file_name}: {inner}")
 
-        logging.debug("No valid IP found; manual check required.")
+        logging.info("No valid IP found in filename or content; returning 'Require Manual Check'.")
         return (file_name, "Require Manual Check")
 
     except Exception as e:
-        logging.error(f"Error in get_ip_address: {str(e)}")
-        safe_name = os.path.basename(file_path) if isinstance(file_path, str) else "Unknown"
+        logging.error(f"Critical error in get_ip_address: {str(e)}")
+        safe_name = os.path.basename(file_path) if isinstance(file_path, str) else "UNKNOWN"
         return (safe_name, "Require Manual Check")
 
 def get_serial_number(log_data):
+    """
+    Extract serial number from network device log data.
+    
+    Priority order:
+    1. System Serial Number from show version
+    2. Main switch device from inventory (Switch System, Switch Stack, Switch 1)
+    3. Other switch devices from inventory
+    4. Chassis/supervisor devices from inventory
+    5. Manual check required
+    
+    Args:
+        log_data (str): Raw log data from network device
+        
+    Returns:
+        str: Device serial number or "Require Manual Check"
+    """
     try:
-        logging.info("Starting serial number search.")
-        # Make it case-insensitive and handle spaces
-        match = re.search(r"System\s+Serial\s+Number\s*:\s*(\S+)", log_data, re.IGNORECASE)
+        logging.info("Starting serial number extraction.")
+        
+        # --- Method 1: System Serial Number from show version ---
+        system_serial = None
+        logging.debug("Attempting extraction via 'show version' patterns.")
+        try:
+            # Multiple patterns for different IOS versions and platforms
+            system_patterns = [
+                r"System\s+Serial\s+Number\s*:\s*(\S+)",
+                r"Processor\s+board\s+ID\s*(\S+)",
+                r"board\s+ID\s*(\S+)",
+                r"Serial\s+Number\s*:\s*(\S+)",
+                r"System\s+serial\s+number\s*:\s*(\S+)",
+                r"Chassis\s+Serial\s+Number\s*:\s*(\S+)"
+            ]
+            
+            for i, pattern in enumerate(system_patterns):
+                match = re.search(pattern, log_data, re.IGNORECASE)
+                if match:
+                    serial = match.group(1).strip()
+                    if serial and serial.upper() not in ['N/A', 'NONE', 'UNKNOWN', 'UNSPECIFIED']:
+                        system_serial = serial
+                        logging.info(f"Found system serial from show version using pattern {i+1}: {system_serial}")
+                        break
+                    else:
+                        logging.debug(f"Pattern {i+1} matched, but value was empty/generic ('{serial}').")
+                else:
+                    logging.debug(f"Pattern {i+1} did not match.")
+        except Exception as e:
+            logging.debug(f"Error extracting system serial: {e}")
+        
+        # --- Method 2: Extract inventory section ---
+        inventory_section = None
+        logging.debug("Attempting to extract 'show inventory' section.")
+        try:
+            inv_match = re.search(r"-{5,}\s*show\s+inventory\s*-{5,}", log_data, re.IGNORECASE)
+            if inv_match:
+                start_pos = inv_match.end()
+                # Find end of inventory section
+                end_match = re.search(r"-{5,}", log_data[start_pos:], re.IGNORECASE)
+                if end_match:
+                    inventory_section = log_data[start_pos:start_pos + end_match.start()]
+                    logging.debug("Extracted 'show inventory' section with clear end marker.")
+                else:
+                    inventory_section = log_data[start_pos:]
+                    logging.debug("Extracted 'show inventory' section to end of log data.")
+            else:
+                logging.debug("Show inventory section header not found.")
+        except Exception as e:
+            logging.debug(f"Error extracting inventory section: {e}")
+        
+        # --- Method 3: Parse inventory for device serial numbers ---
+        inventory_serial = None
+        if inventory_section:
+            logging.debug("Starting inventory parsing and device prioritization.")
+            try:
+                # Device priority for serial number selection
+                device_priorities = {
+                    'switch_system': 100,     # Switch System - main chassis
+                    'switch_stack': 95,       # Stack, c93xx Stack
+                    'switch_numbered': 90,    # Switch 1, Switch 2
+                    'switch_other': 80,       # Other switch devices
+                    'chassis': 70,            # Chassis devices
+                    'supervisor': 60,         # Supervisor modules
+                    'linecard': 30,           # Line cards
+                    'transceiver': 20,        # SFPs, transceivers
+                    'power_fan': 10,          # Power supplies, fans
+                    'unknown': 0
+                }
+                
+                inventory_devices = []
+                
+                # Different inventory patterns for serial numbers
+                inventory_patterns = [
+                    # Format: NAME: "device name" ... SN: serial
+                    r'(?ims)NAME:\s*"([^"]+)".*?\bSN:\s*([A-Z0-9\-]+)',
+                    # Format: NAME device name ... SN serial (without quotes)
+                    r'(?ims)NAME:\s*([^,\n]+?).*?\bSN:\s*([A-Z0-9\-]+)',
+                    # Format: PID: xxx , VID: xxx , SN: serial
+                    r'(?ims)PID:\s*[^\s,]+\s*,\s*VID:\s*[^\s,]+\s*,\s*SN:\s*([A-Z0-9\-]+)',
+                    # Legacy format variations
+                    r'(?ims)NAME:\s*"([^"]+)"[^\n]*\n.*?SN:\s*([A-Z0-9\-]+)'
+                ]
+                
+                for i, pattern in enumerate(inventory_patterns):
+                    if pattern.count('(') == 1:  # Pattern with only SN group
+                        matches = re.findall(pattern, inventory_section)
+                        for serial in matches:
+                            if isinstance(serial, tuple):
+                                serial = serial[0] if len(serial) == 1 else serial[1]
+                            
+                            serial = serial.strip()
+                            if not serial or serial.upper() in ['N/A', 'NONE', 'UNKNOWN', 'UNSPECIFIED']:
+                                continue
+                            
+                            inventory_devices.append({
+                                'name': 'Device',
+                                'serial': serial,
+                                'device_type': 'unknown',
+                                'priority': device_priorities['unknown']
+                            })
+                            logging.debug(f"Identified generic serial from pattern {i+1}: {serial}")
+                    else:  # Pattern with NAME and SN groups
+                        matches = re.findall(pattern, inventory_section)
+                        for name, serial in matches:
+                            name = name.strip().strip('"')
+                            serial = serial.strip()
+                            name_lower = name.lower()
+                            
+                            # Skip invalid serials
+                            if not serial or serial.upper() in ['N/A', 'NONE', 'UNKNOWN', 'UNSPECIFIED']:
+                                continue
+                            
+                            # Skip obvious non-main components
+                            if any(x in name_lower for x in ['transceiver', 'sfp', 'gbic', 'cable', 'optic']):
+                                continue
+                            
+                            # Classify device type and assign priority
+                            device_type = 'unknown'
+                            priority = 0
+                            
+                            # Switch devices (highest priority)
+                            if 'switch' in name_lower:
+                                if 'system' in name_lower:
+                                    device_type = 'switch_system'
+                                    priority = device_priorities['switch_system']
+                                elif any(x in name_lower for x in ['stack', 'c93xx']):
+                                    device_type = 'switch_stack'
+                                    priority = device_priorities['switch_stack']
+                                elif re.search(r'switch\s*\d+', name_lower):
+                                    device_type = 'switch_numbered'
+                                    priority = device_priorities['switch_numbered']
+                                    # Boost priority for Switch 1
+                                    if 'switch 1' in name_lower or 'switch  1' in name_lower:
+                                        priority += 5
+                                else:
+                                    device_type = 'switch_other'
+                                    priority = device_priorities['switch_other']
+                            
+                            # Chassis devices
+                            elif 'chassis' in name_lower:
+                                # Avoid line-cards like "Chassis 1 1"
+                                if re.search(r'chassis\s*\d+\b(?!\s*\d)', name_lower):
+                                    device_type = 'chassis'
+                                    priority = device_priorities['chassis']
+                                    # Boost priority for Chassis 1
+                                    if 'chassis 1' in name_lower or 'chassis  1' in name_lower:
+                                        priority += 5
+                            
+                            # Supervisor modules
+                            elif any(x in name_lower for x in ['supervisor', 'sup ']):
+                                device_type = 'supervisor'
+                                priority = device_priorities['supervisor']
+                            
+                            # Line cards
+                            elif any(x in name_lower for x in ['linecard', 'line card']):
+                                device_type = 'linecard'
+                                priority = device_priorities['linecard']
+                            
+                            # Power supplies and fans
+                            elif any(x in name_lower for x in ['power', 'fan', 'fantray']):
+                                device_type = 'power_fan'
+                                priority = device_priorities['power_fan']
+                            
+                            # Add to devices if it has valid priority
+                            if priority > 0:
+                                inventory_devices.append({
+                                    'name': name,
+                                    'serial': serial,
+                                    'device_type': device_type,
+                                    'priority': priority
+                                })
+                                logging.debug(f"Identified device: {name} (SN: {serial}, Type: {device_type}, Pri: {priority})")
+                
+                # Select highest priority device serial
+                if inventory_devices:
+                    logging.debug(f"Total relevant inventory devices found: {len(inventory_devices)}. Sorting by priority.")
+                    # Sort by priority (highest first), then by name for consistency
+                    inventory_devices.sort(key=lambda x: (-x['priority'], x['name']))
+                    
+                    # Special handling for multiple switches with same serial
+                    switch_devices = [d for d in inventory_devices if d['device_type'].startswith('switch')]
+                    if len(switch_devices) > 1:
+                        switch_serials = set(d['serial'] for d in switch_devices)
+                        if len(switch_serials) == 1:
+                            # All switches have same serial - use it
+                            inventory_serial = next(iter(switch_serials))
+                            logging.info(f"Inventory: All switches have same serial: {inventory_serial}")
+                        else:
+                            # Mixed serials - prefer Switch 1, Switch System, or highest priority
+                            switch_1 = next((d for d in switch_devices if '1' in d['name'] or 'system' in d['name'].lower()), None)
+                            if switch_1:
+                                inventory_serial = switch_1['serial']
+                                logging.info(f"Inventory: Using primary switch serial: {switch_1['name']} ({inventory_serial})")
+                            else:
+                                # Use highest priority switch
+                                inventory_serial = switch_devices[0]['serial']
+                                logging.info(f"Inventory: Using highest priority switch serial: {switch_devices[0]['name']} ({inventory_serial})")
+                    else:
+                        # Single switch or no switches - use highest priority device
+                        selected_device = inventory_devices[0]
+                        inventory_serial = selected_device['serial']
+                        logging.info(f"Inventory: Selected highest priority device: {selected_device['name']} ({inventory_serial})")
+                
+                # Legacy fallback: Look specifically for Switch N patterns
+                if not inventory_serial:
+                    logging.debug("No serial selected via main inventory logic. Trying legacy Switch N pattern.")
+                    switch_pattern = r'NAME:\s*"Switch\s*(\d+)".*?\bSN:\s*([A-Z0-9\-]+)'
+                    switch_matches = re.findall(switch_pattern, inventory_section, re.IGNORECASE | re.DOTALL)
+                    if switch_matches:
+                        switch_serials = {int(num): serial.strip() for num, serial in switch_matches}
+                        serial_values = set(switch_serials.values())
+                        
+                        if len(serial_values) == 1:
+                            # All Switch N have same serial
+                            inventory_serial = next(iter(serial_values))
+                            logging.info(f"Legacy: All Switch N have same serial: {inventory_serial}")
+                        elif 1 in switch_serials:
+                            # Mixed serials - prefer Switch 1
+                            inventory_serial = switch_serials[1]
+                            logging.info(f"Legacy: Using Switch 1 serial: {inventory_serial}")
+                        else:
+                            # Use first available switch
+                            first_switch = min(switch_serials.keys())
+                            inventory_serial = switch_serials[first_switch]
+                            logging.info(f"Legacy: Using Switch {first_switch} serial: {inventory_serial}")
+                
+                # Additional fallback: Check for common chassis serials
+                if not inventory_serial:
+                    logging.debug("Trying additional fallback for Chassis serials.")
+                    chassis_pattern = r'NAME:\s*"Chassis\s*\d+[^"]*".*?\bSN:\s*([A-Z0-9\-]+)'
+                    chassis_matches = re.findall(chassis_pattern, inventory_section, re.IGNORECASE | re.DOTALL)
+                    chassis_serials = {serial for serial in chassis_matches 
+                                     if serial and serial.upper() not in ['N/A', 'NONE', 'UNKNOWN', 'UNSPECIFIED']}
+                    
+                    if len(chassis_serials) == 1:
+                        inventory_serial = next(iter(chassis_serials))
+                        logging.info(f"Using common chassis serial: {inventory_serial}")
+                        
+            except Exception as e:
+                logging.debug(f"Error parsing inventory serials: {e}")
+        
+        # --- Determine final serial number ---
+        final_serial = None
+        
+        # Priority: System serial > Inventory serial
+        if system_serial:
+            final_serial = system_serial
+            logging.info(f"Using system serial number: {final_serial}")
+            
+            # Log comparison with inventory if available
+            if inventory_serial and inventory_serial != system_serial:
+                logging.info(f"System serial ({system_serial}) differs from inventory ({inventory_serial}), using system")
+            elif inventory_serial and inventory_serial == system_serial:
+                logging.info(f"System and inventory serials match: {final_serial}")
+                
+        elif inventory_serial:
+            final_serial = inventory_serial
+            logging.info(f"Using inventory serial number: {final_serial}")
+        
         logging.debug("Serial number search completed.")
-        return match.group(1) if match else "Require Manual Check"
+        logging.info(f"Final serial: {final_serial}")
+        return final_serial or "Require Manual Check"
+        
     except Exception as e:
-        logging.error(f"Error in get_serial_number: {str(e)}")
-        return f"Require Manual Check"
+        logging.error(f"Error in get_serial_number: {e}")
+        return "Require Manual Check"
 
-def get_uptime(log_data):
+def get_uptime(log_data: str) -> str:
     try:
         logging.info("Starting uptime search.")
-        hostname = get_hostname(log_data)
-        # If hostname isn't available, don't attempt a bogus regex match
-        if not hostname or hostname == "Not available":
-            logging.debug("Uptime search skipped due to unavailable hostname.")
+
+        if not isinstance(log_data, str) or not log_data.strip():
             return "Not available"
-        # Escape hostname to prevent regex meta-characters from breaking the pattern
-        pattern = rf"{re.escape(hostname)}\s+uptime is\s+(.+)"
-        match = re.search(pattern, log_data)
-        logging.debug("Uptime search completed.")
-        return match.group(1).strip() if match else "Require Manual Check"
-    except Exception as e:
-        logging.error(f"Error in get_uptime: {str(e)}")
-        return f"Require Manual Check"
+
+        hostname = get_hostname(log_data)
+
+        if hostname and hostname not in {"Not available", "Require Manual Check"}:
+            escaped_hostname = re.escape(hostname.strip())
+            pat_host = rf"(?mi)^\s*{escaped_hostname}\s+uptime\s+is\s+(.+?)\s*$"
+            m = re.search(pat_host, log_data)
+            if m:
+                return m.group(1).strip()
+
+        pat_any_uptime_is = r"(?mi)^\s*(\S+)\s+uptime\s+is\s+(.+?)\s*$"
+        candidates = re.findall(pat_any_uptime_is, log_data)
+        if candidates:
+            for prefix, up in candidates:
+                if re.search(r"(?i)\bcontrol\s+processor\b", prefix):
+                    continue
+                if up.strip():
+                    return up.strip()
+            if candidates[0][1].strip():
+                return candidates[0][1].strip()
+
+        pat_cp = r"(?mi)^\s*Uptime\s+for\s+this\s+control\s+processor\s+is\s+(.+?)\s*$"
+        m = re.search(pat_cp, log_data)
+        if m and m.group(1).strip():
+            return m.group(1).strip()
+
+        return "Require Manual Check"
+
+    except Exception:
+        return "Require Manual Check"
 
 def get_current_sw_version(log_data):
-    """
-    Returns the software version string from 'show version' output.
-    Supports:
-      • IOS-XE 16/17 lines like: "Cisco IOS XE Software, Version 16.09.04"
-      • IOS-XE 16/17 classic line: "Cisco IOS Software [...], Version 16.9.4, RELEASE ..."
-      • IOS-XE 3.x lines like: "Cisco IOS Software, IOS-XE Software, ..., Version 03.06.06E ..."
-    On no match: "Not available".
-    """
     try:
+        logging.info("Starting software version extraction.")
         if not log_data:
+            logging.debug("Log data is empty. Returning 'Not available'.")
             return "Not available"
 
         # 1) Most explicit: "Cisco IOS XE Software, Version X"
+        logging.debug("Attempt 1: Searching for explicit 'Cisco IOS XE Software, Version X'.")
         m = re.search(r'(?mi)^\s*Cisco\s+IOS\s+XE\s+Software,\s*Version\s+([^\s,]+)', log_data)
         if m:
-            return m.group(1).strip()
-
+            version = m.group(1).strip()
+            logging.info(f"Version found (Attempt 1, IOS XE explicit): {version}")
+            return version
+        
         # 2) Common classic banner line that also appears on 16/17 & 3.x:
         #    "Cisco IOS Software ... Version X[, ]"
+        logging.debug("Attempt 2: Searching for 'Cisco IOS Software ... Version X'.")
         m = re.search(r'(?mi)^\s*Cisco\s+IOS\s+Software.*?\bVersion\s+([^\s,]+)', log_data)
         if m:
-            return m.group(1).strip()
+            version = m.group(1).strip()
+            logging.info(f"Version found (Attempt 2, IOS classic): {version}")
+            return version
 
         # 3) Safety net for variants like "IOS-XE Software, ... Version X"
+        logging.debug("Attempt 3: Searching for 'IOS[- ]?XE Software ... Version X'.")
         m = re.search(r'(?mi)\bIOS[- ]?XE\s+Software.*?\bVersion\s+([^\s,]+)', log_data)
         if m:
-            return m.group(1).strip()
+            version = m.group(1).strip()
+            logging.info(f"Version found (Attempt 3, IOS-XE variant): {version}")
+            return version
 
         # 4) Last-chance: grab the first "Version X" in the top of the file
+        logging.debug("Attempt 4: Last chance search in the first 50 lines for 'Version X'.")
         head = "\n".join(log_data.splitlines()[:50])
         m = re.search(r'(?mi)\bVersion\s+([0-9A-Za-z.\(\)]+)', head)
         if m:
-            return m.group(1).strip()
-
+            version = m.group(1).strip()
+            logging.warning(f"Version found (Attempt 4, generic head search): {version}")
+            return version
+        
+        logging.info("No software version found by any pattern. Returning 'Not available'.")
         return "Not available"
 
     except Exception as e:
@@ -272,13 +814,22 @@ def get_last_reboot_reason(log_data):
         logging.info("Starting last reboot reason search.")
         
         # First try to match "Last reload reason"
+        logging.debug("Attempt 1: Searching for 'Last reload reason'.")
         match = re.search(r"Last reload reason\s*:\s*(.+)", log_data, re.IGNORECASE)
         if match:
             result = match.group(1).strip()
+            logging.info(f"Reboot reason found (Attempt 1): {result}")
         else:
             # Fallback: match "System returned to ROM by ..."
+            logging.debug("Attempt 1 failed. Attempt 2: Searching for 'System returned to ROM by'.")
             match = re.search(r"System returned to ROM by\s+(.+)", log_data, re.IGNORECASE)
-            result = match.group(1).strip() if match else "Require Manual Check"
+            if match:
+                result = match.group(1).strip()
+                logging.info(f"Reboot reason found (Attempt 2, fallback): {result}")
+            else:
+                # ACTION 3: Return final fallback
+                result = "Require Manual Check"
+                logging.info("No common reboot reason pattern matched. Returning 'Require Manual Check'.")
         
         logging.debug("Last reboot reason search completed.")
         return result
@@ -287,13 +838,20 @@ def get_last_reboot_reason(log_data):
         logging.error(f"Error in get_last_reboot_reason: {str(e)}")
         return f"Require Manual Check"
 
-
 def get_cpu_utilization(log_data):
     try:
         logging.info("Starting CPU utilization search.")
+        logging.debug("Searching for 'five minutes: <util>%' pattern.")
         match = re.search(r"five minutes:\s+(\d+)%", log_data)
-        logging.debug("CPU utilization search completed.")
-        return match.group(1) + "%" if match else "Require Manual Check"
+        if match:
+            # ACTION 2a: Format and return the result
+            cpu_util = match.group(1) + "%"
+            logging.info(f"Successfully extracted 5-minute CPU utilization: {cpu_util}")
+            return cpu_util
+        else:
+            # ACTION 2b: Return fallback if no match
+            logging.info("CPU utilization pattern did not match. Returning 'Require Manual Check'.")
+            return "Require Manual Check"
     except Exception as e:
         logging.error(f"Error in get_cpu_utilization: {str(e)}")
         return f"Require Manual Check"
@@ -301,41 +859,31 @@ def get_cpu_utilization(log_data):
 def check_stack(log_data):
     try:
         logging.info("Starting stack check.")
-        cleared_data_start = re.search('show version', log_data, re.IGNORECASE)
-        if not cleared_data_start:
-            logging.debug("No 'show version' found in log data.")
+
+        # Only real stack switches have "Switch <number>" lines in show version output
+        real_stack_match = re.search(r'(?mi)^\s*Switch\s+(\d+)\b', log_data)
+        if not real_stack_match:
+            logging.debug("No valid Catalyst stack pattern found - treating as single switch.")
             return False
 
-        cleared_data_end = re.search('show', log_data[cleared_data_start.span()[1] + 1:], re.IGNORECASE)
-        if not cleared_data_end:
-            req_data = log_data[cleared_data_start.span()[1]:]
-        else:
-            req_data = log_data[cleared_data_start.span()[1]:cleared_data_start.span()[1] + cleared_data_end.span()[0]]
-
-        start_point = re.search(r"System Serial Number\s+:\s+(\S+)", req_data)
-        if not start_point:
-            logging.debug("No system serial number found in log data.")
+        # Use IOS_XE_Stack_Switch logic to safely evaluate
+        if not IOS_XE_Stack_Switch.is_stack_switch(log_data):
+            logging.debug("IOS_XE_Stack_Switch indicates non-stack device.")
             return False
 
-        next_start_end_point = re.search(r"Switch\s+(\S+)", req_data[start_point.span()[1]:])
-        if not next_start_end_point:
-            logging.debug("No switch information found in log data.")
+        stack_details = IOS_XE_Stack_Switch.parse_ios_xe_stack_switch(log_data)
+        if not stack_details:
+            logging.debug("Stack parser returned empty - treating as single switch.")
             return False
-        else:
-            stack_details = IOS_XE_Stack_Switch.parse_ios_xe_stack_switch(log_data)
-            logging.debug("Stack check completed.")
-            return stack_details
+
+        logging.debug("Stack check completed - valid stack detected.")
+        return stack_details
+
     except Exception as e:
         logging.error(f"Error in check_stack: {str(e)}")
-        return f"Require Manual Check"
+        return False
 
 def get_memory_info(log_data):
-    """
-    Works for:
-      • IOS-XE 16/17: 'show memory statistics' (Processor ... Total(b) Used(b) Free(b))
-      • IOS-XE 3.x :  'show process memory sorted' (System memory : 3931592K total, 1446776K used, 2484816K free, ...)
-    Returns: [total_bytes, used_bytes, free_bytes, "util%"] or all "Not available" on failure.
-    """
     try:
         logging.info("Starting memory info extraction.")
 
@@ -345,14 +893,6 @@ def get_memory_info(log_data):
         import re
 
         def _parse_num_with_unit(token: str) -> int | None:
-            """
-            Parse numbers possibly with commas and unit suffix (K/M/G, case-insensitive).
-            Returns bytes as int.
-            Examples: '531325444' -> 531325444
-                      '3,931,592K' -> 3931592 * 1024
-                      '2048M' -> 2048 * 1024 * 1024
-                      '2G' -> 2 * 1024 ** 3
-            """
             if not token:
                 return None
             s = token.strip().replace(",", "")
@@ -376,11 +916,6 @@ def get_memory_info(log_data):
                 mult = 1024 ** 3
             return int(num * mult)
 
-        # ----------------------------
-        # Path A: IOS-XE 16/17 format
-        # Example:
-        # Processor  7F661F4010   531325444   120791012   410534432   ...
-        # ----------------------------
         m = re.search(
             r'(?mi)^\s*Processor\s+\S+\s+(\d+)\s+(\d+)\s+(\d+)\b',
             log_data
@@ -396,11 +931,6 @@ def get_memory_info(log_data):
             logging.debug("Memory info (Processor table) extraction completed.")
             return [total, used, free, f"{utilization:.2f}%"]
 
-        # ----------------------------
-        # Path B: IOS-XE 3.x format
-        # Example:
-        # System memory  : 3931592K total, 1446776K used, 2484816K free, 221424K kernel reserved
-        # ----------------------------
         m2 = re.search(
             r'(?mi)^\s*System\s+memory\s*:\s*'
             r'(?P<total>[0-9,]+[KkMmGg]?)\s+total,\s*'
@@ -504,248 +1034,639 @@ def get_flash_info(log_data):
         logging.error(f"Error in get_flash_info: {str(e)}")
         return f"Require Manual Check"
 
-def get_fan_status(log_data):
+# ====================================================================
+# DYNAMIC PATTERN DEFINITIONS
+# These patterns are the core of the temperature status function.
+# NOTE: Named groups (?P<ID> and ?P<STATUS>) are used for dynamic extraction.
+# ====================================================================
+TEMPERATURE_PATTERNS = {
+    # ------------------- TIER 1: POSITIVE PATTERNS -------------------
+    "positive_patterns": [
+        {
+            "name": "P1.1_System_Summary_OK",
+            "description": "Matches 'Switch N: SYSTEM TEMPERATURE is OK' (Catalyst Summary)",
+            "regex": r"Switch\s+(?P<ID>\d+):\s*SYSTEM\s+TEMPERATURE\s+is\s+OK\s*$",
+            "source_type": "Switch"
+        },
+        {
+            "name": "P1.2_Global_State_GREEN",
+            "description": "Matches 'Temperature State: GREEN' (Catalyst Summary)",
+            "regex": r"Temperature\s+State\s*:\s*GREEN\s*$",
+            "source_type": "Global"
+        },
+        {
+            "name": "P1.3_Sensor_List_Switch_GREEN",
+            "description": "Matches 'SYSTEM INLET N GREEN' or 'SYSTEM HOTSPOT N GREEN' (Catalyst 9200 Sensor List)",
+            "regex": r"SYSTEM\s+(?:INLET|OUTLET|HOTSPOT)\s+(?P<ID>\d+)\s+GREEN\s+",
+            "source_type": "Switch"
+        },
+        {
+            "name": "P1.5_Environmental_Alarms_Clear",
+            "description": "Matches explicit 'environmental alarms: no alarms' (General Positive)",
+            "regex": r"environmental\s+alarms:\s+no\s+alarms",
+            "source_type": "Global"
+        },
+        {
+            "name": "P1.7_No_Temp_Alarms",
+            "description": "Matches the global 'no temperature alarms' header (4500/6500)",
+            "regex": r"no\s+temperature\s+alarms",
+            "source_type": "Global"
+        },
+        {
+            "name": "P1.8_Sensor_Table_OK",
+            "description": "Matches the modular table rows with explicit 'ok' status (4500/6500)",
+            # ID is Module ID, status is implicit 'ok'
+            "regex": r"^\s*(?P<ID>\d+)\s+.*?\(\s*\d+C,\d+C,\d+C\)\s*ok",
+            "source_type": "Switch"
+        }
+    ],
+    # ------------------- TIER 2: NEGATIVE PATTERNS -------------------
+    "negative_patterns": [
+        {
+            "name": "N2.1_Explicit_Critical_State",
+            "description": "Matches explicit failure keywords like CRITICAL or RED in status fields",
+            "regex": r"(?:Status|State|System\s+Temperature)\s*:\s*(CRITICAL|RED|FAULT|FAILED|WARNING|ALERT)",
+            "source_type": "Global"
+        },
+        {
+            "name": "N2.2_System_Summary_NOT_OK",
+            "description": "Matches 'SYSTEM TEMPERATURE is NOT OK' (Catalyst Summary)",
+            "regex": r"Switch\s+(?P<ID>\d+):\s*SYSTEM\s+TEMPERATURE\s+is\s+NOT\s*OK\s*$",
+            "source_type": "Switch"
+        }
+    ]
+}
+
+# --- Mock Logger (Replace with a real logging library in production) ---
+# class DummyLogger:
+#     def info(self, msg): pass
+#     def debug(self, msg): pass
+#     def error(self, msg): pass
+# logging = DummyLogger()
+
+# ====================================================================
+# HELPER FUNCTION
+# ====================================================================
+
+def extract_env_sections(log_data: str) -> str:
     """
-    Parse fan lines from 'show environment all' style output (XE 16/17 and XE 3.x).
-    Normalizes to: "OK" if all present fans are OK; "Not OK" if any fan reports a fault;
-    ignores "NOT PRESENT" entries. If nothing is found, returns "Unsupported version".
+    Extracts content blocks likely from 'show environment' commands.
+    This ensures the parser only looks at relevant data.
     """
-    try:
-        if not log_data:
-            return "Not available"
+    sections = []
+    
+    # 1. Search for commands in a command prompt environment (e.g., 'SWITCH#show env')
+    command_blocks = re.split(r'(?m)^[^\r\n#]*#\s*', log_data)
+    for block in command_blocks:
+        if re.match(r'(?i)^\s*sh(?:ow)?\s+env(?:ironment)?(?:\s+all)?', block.strip()):
+            sections.append(block.strip())
 
-        # Match lines like:
-        #   "Switch 1 FAN 1 is OK"
-        #   "FAN PS-2 is NOT PRESENT"
-        fan_pat = re.compile(
-            r'(?mi)^\s*(?:Switch\s+\d+\s+)?FAN(?:\s+(?:PS-\d+|\d+))?\s+is\s+([A-Z ]+)\s*$'
-        )
+    if not sections:
+        # 2. Fallback for log formats where commands are wrapped in dashes (e.g., 'show tech')
+        pattern_dash = r"(-{5,}\s*show environment(?:\s+all)?\s*-{5,}[\s\S]*?-{5,}\s*show)"
+        matches_dash = re.findall(pattern_dash, log_data, re.IGNORECASE | re.DOTALL)
+        sections.extend(matches_dash)
+        
+    if not sections:
+        # 3. Final attempt: Return the whole log if it seems like a show env output without header
+        if re.search(r'(?mi)temperature|temp|hotspot', log_data):
+            return log_data
 
-        statuses = []
-        for m in fan_pat.finditer(log_data):
-            raw = m.group(1).strip().upper()
-            if raw.startswith("OK"):
-                statuses.append("OK")
-            elif "NOT PRESENT" in raw:
-                statuses.append("NOT PRESENT")
-            elif raw in {"NOT OK", "FAILED", "FAIL", "FAULTY", "BAD"}:
-                statuses.append("NOT OK")
-            else:
-                # Unknown token – keep but treat as suspicious
-                statuses.append(raw)
+    return "\n".join(sections)
 
-        if not statuses:
-            return "Require Manual Check"
+# ====================================================================
+# CORE FUNCTION: get_temperature_status
+# ====================================================================
 
-        # Compute overall health: ignore NOT PRESENT; any NOT OK => Not OK; else OK if any OK seen
-        present_statuses = [s for s in statuses if s != "NOT PRESENT"]
-        if any(s == "NOT OK" for s in present_statuses):
-            return "Not OK"
-        if any(s == "OK" for s in present_statuses):
-            return "OK"
+# def get_temperature_status(log_data: str) -> List[str]:
+#     """
+#     Analyzes log data using dynamic regex patterns to determine temperature status.
+#     Returns a list of final statuses found (e.g., ['OK'], ['NOT OK'], or ['Not available']).
+#     """
+#     try:
+#         search_data = extract_env_sections(log_data)
+#         # Clean up common non-breaking spaces and carriage returns
+#         search_data = search_data.replace('\xa0', ' ').replace('\r', '') 
 
-        # Only NOT PRESENT seen (no installed fans reported)
-        return "Not available"
+#         # per_switch_status: Tracks the determined status (True=OK, False=NOT OK)
+#         per_switch_status: Dict[int, bool] = {} 
+#         total_matches_found = False
+        
+#         # --- PHASE 1: Apply ALL Positive Patterns (Tier 1) ---
+#         for pattern_info in TEMPERATURE_PATTERNS["positive_patterns"]:
+            
+#             # Use finditer for reliable extraction, especially for named groups
+#             matches = re.finditer(pattern_info["regex"], search_data, re.IGNORECASE | re.DOTALL | re.MULTILINE)
+            
+#             for m in matches:
+#                 total_matches_found = True
+                
+#                 if pattern_info["source_type"] == "Switch":
+#                     # For switch/module-specific status
+#                     try:
+#                         # Use default switch ID 1 if 'ID' group is not available, though it should be.
+#                         sw_id = int(m.group('ID')) if 'ID' in m.groupdict() else 1
+                        
+#                         # Positive match reinforces OK status. Default assumption is True.
+#                         per_switch_status[sw_id] = per_switch_status.get(sw_id, True) and True
+#                     except (IndexError, ValueError):
+#                         # Catch if a Switch pattern unexpectedly lacks an ID group
+#                         per_switch_status[1] = per_switch_status.get(1, True) and True
+                
+#                 elif pattern_info["source_type"] == "Global":
+#                     # Global positive matches only signal we have *some* useful status data.
+#                     # We assume Switch 1 if no IDs have been seen yet.
+#                     if not per_switch_status:
+#                         per_switch_status[1] = True
 
-    except Exception as e:
-        logging.error(f"Error in get_fan_status: {str(e)}")
-        return "Not available"
+
+#         # --- PHASE 2: Apply ALL Negative Patterns (Tier 2) ---
+#         # Negative patterns override any previously set status (Fail-Safe)
+#         for pattern_info in TEMPERATURE_PATTERNS["negative_patterns"]:
+#             matches = re.finditer(pattern_info["regex"], search_data, re.IGNORECASE | re.DOTALL | re.MULTILINE)
+            
+#             for m in matches:
+#                 total_matches_found = True
+
+#                 if pattern_info["source_type"] == "Switch":
+#                     # Explicitly set status to False (NOT OK) for the matching switch
+#                     try:
+#                         sw_id = int(m.group('ID')) if 'ID' in m.groupdict() else 1
+#                         per_switch_status[sw_id] = False
+#                     except (IndexError, ValueError):
+#                         per_switch_status[1] = False
+                
+#                 elif pattern_info["source_type"] == "Global":
+#                     # A single critical word applies globally, forcing all tracked switches to NOT OK.
+#                     if per_switch_status:
+#                         for sw_id in list(per_switch_status.keys()):
+#                             per_switch_status[sw_id] = False
+#                     else:
+#                          per_switch_status[1] = False # Assume Switch 1 is failing if no switch IDs yet
+
+
+#         # --- PHASE 3: Final Aggregation and Result (Tier 3 Heuristic) ---
+#         final_results = []
+#         has_numeric_temps = re.search(r'(?mi)\b(?:temperature|temp|hotspot)\b[^:\n]*[:\s]\s*\d+\s*(?:C|F|Degree)', search_data)
+
+#         if per_switch_status:
+#             # Case 1: We have definitive, structured status data from Tier 1/2 checks
+#             for sw in sorted(per_switch_status.keys()):
+#                 final_results.append("OK" if per_switch_status[sw] else "NOT OK")
+            
+#         elif not total_matches_found and has_numeric_temps:
+#             # Case 2 (Safe Fallback): No explicit status found, but numerical temp data exists. Assume OK.
+#             final_results = ["OK"]
+        
+#         elif search_data:
+#             # Case 3: Log data was extracted but contains no status patterns or temp numbers.
+#             final_results = ["Not available"]
+            
+#         else:
+#             # Case 4: No environment data was found/extracted at all.
+#             final_results = ["Not available"]
+
+#         return list(set(final_results)) # Return unique statuses only
+
+#     except Exception as e:
+#         logging.error(f"Error in get_temperature_status: {str(e)}")
+#         # If any unexpected exception occurs, flag for manual review
+#         return [f"Require Manual Check: {type(e).__name__}"]
 
 def get_temperature_status(log_data: str):
-    """
-    Returns a list with one status per switch: ["OK", "Not OK", ...]
-    Supports:
-      - 16.x / 3.x: "Switch N: SYSTEM TEMPERATURE is OK"
-      - 17.x:       "SYSTEM INLET|OUTLET|HOTSPOT   N   GREEN|YELLOW|RED ..."
-    If nothing found: ["Not available"]
-    """
     try:
-        logging.info("Starting temperature status extraction.")
-        per_switch_ok = {}
+        # 1) Classic formats
+        hits1 = re.findall(r'(?mi)^\s*(?:SYSTEM\s+)?TEMPERATURE\s+is\s+([A-Z ]+)\s*$', log_data)
+        hits2 = re.findall(r'(?mi)^\s*Temperature\s+State\s*:\s*([A-Z]+)\s*$', log_data)
 
-        # --- 17.x style: SYSTEM INLET/OUTLET/HOTSPOT <sw> <GREEN|...>
-        # e.g. "SYSTEM INLET    2               GREEN                 25 Celsius ..."
-        m_sys = re.findall(r'(?mi)^\s*SYSTEM\s+(?:INLET|OUTLET|HOTSPOT)\s+(\d+)\s+([A-Z]+)', log_data)
-        if m_sys:
-            tmp = {}
-            for sw_str, state in m_sys:
-                sw = int(sw_str)
-                state_up = state.strip().upper()
-                # all GREEN => OK; any non-GREEN => Not OK
-                prev = tmp.get(sw, True)
-                tmp[sw] = prev and (state_up == "GREEN")
-            per_switch_ok.update(tmp)
+        def _norm(s: str) -> str:
+            s = s.strip().upper()
+            return "OK" if s in ("OK", "GREEN") else "Not OK"
+        if hits1 or hits2:
+            vals = [_norm(v) for v in hits1] + [_norm(v) for v in hits2]
+            return ["OK"] if vals and all(v == "OK" for v in vals) else ["Not OK"]
+        # 2) 6880-style hierarchical output
+        has_numeric_temps = re.search(r'(?mi)^\s*switch\s+\d+.*temperature\s*:\s*\d+\s*C\b', log_data)
+        if not has_numeric_temps:
+            return ["Not available"]
+        for raw in log_data.splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            # benign lines
+            if re.search(r'(?i)\bno\s+alarms?\b', line):
+                continue
+            if re.search(r'(?i)^\s*environmental\s+alarms\s*:\s*$', line):
+                continue
+            # explicit NOT OK
+            if re.search(r'(?i)\bnot\s*ok\b', line):
+                return ["Not OK"]
+             # over-temp / critical
+            if re.search(r'(?i)\bover[\s-]?temp(?:erature)?\b', line):
+                return ["Not OK"]
+            if re.search(r'(?i)\bcritical\b', line):
+                return ["Not OK"]
+            # alarm/fault/fail only if the same line DOESN'T say OK
+            if re.search(r'(?i)\balarms?\b', line) and not re.search(r'(?i)\bok\b', line):
+                # skip section headers like "... alarms:" (no status on the same line)
+                if re.search(r':\s*$', line):
+                    continue
+                return ["Not OK"]
+            if re.search(r'(?i)\bfault\b', line) and not re.search(r'(?i)\bok\b', line):
+                return ["Not OK"]
+            if re.search(r'(?i)\bfail(?:ed)?\b', line) and not re.search(r'(?i)\bok\b', line):
+                return ["Not OK"]
+            # saw numeric temps and no bad lines
+            return ["OK"]
+    except Exception as e:
+        logging.error(f"Error in get_temperature_status_ios: {e}")
+        return ["Require Manual Check"]
 
-        # --- 16.x / 3.x style: "Switch N: SYSTEM TEMPERATURE is OK"
-        m_legacy = re.findall(r'(?mi)^\s*Switch\s+(\d+):\s*SYSTEM\s+TEMPERATURE\s+is\s+([A-Za-z ]+)\s*$', log_data)
-        if m_legacy:
-            tmp = {}
-            for sw_str, status_text in m_legacy:
-                sw = int(sw_str)
-                ok = (status_text.strip().upper() == "OK")
-                prev = tmp.get(sw, True)
-                tmp[sw] = prev and ok
-            # Merge — if we already had 17.x signals, AND them
-            for sw, ok in tmp.items():
-                per_switch_ok[sw] = per_switch_ok.get(sw, True) and ok
+# Helper to check if a state string is "OK" (Unchanged)
+def is_fan_ok(state: str) -> bool:
+    """Checks if a fan state string indicates an 'OK' status."""
+    st = state.strip().upper()
+    return st == "OK" or "NOT PRESENT" in st or st == "GOOD" or st == "NORMAL" or st == "FANTRAY_OK" or st == "GREEN"
 
-        if not per_switch_ok:
-            logging.debug("No temperature patterns matched.")
+# Helper for extracting environment sections (Unchanged)
+def extract_env_sections(log_data: str) -> str:
+    sections = []
+    # Simplified command extraction for brevity
+    command_blocks = re.split(r'(?m)^[^\r\n#]*#\s*', log_data)
+    
+    for block in command_blocks:
+        if re.match(r'(?i)^\s*sh(?:ow)?\s+env(?:ironment)?(?:\s+all)?', block.strip()):
+            sections.append(block.strip())
+
+    if not sections:
+        pattern_dash = r"(-{5,}\s*show environment(?:\s+all)?\s*-{5,}[\s\S]*?-{5,}\s*show)"
+        matches_dash = re.findall(pattern_dash, log_data, re.IGNORECASE | re.DOTALL)
+        sections.extend(matches_dash)
+    
+    return "\n".join(sections)
+
+def get_fan_status(log_data: str) -> List[str]:
+    try:
+        if not log_data:
             return ["Not available"]
 
-        result = ["OK" if per_switch_ok[sw] else "Not OK" for sw in sorted(per_switch_ok.keys())]
-        logging.debug("Temperature status extraction completed.")
-        return result if result else ["Not available"]
+        # --- PREPROCESSING FIX: Handle non-standard whitespace/CRLF issues ---
+        log_data = log_data.replace('\xa0', ' ').replace('\r', '') 
+        # ----------------------------------------------------------------------
+        
+        # Key: Switch Number (int), Value: List of boolean status (True=OK, False=NOT OK)
+        fan_status_by_switch: Dict[int, List[bool]] = {}
+        # NEW: Dedicated tracking for ONLY chassis/module fans (excluding power supply fans)
+        chassis_fan_status_by_switch: Dict[int, List[bool]] = {} 
 
-    except Exception as e:
-        logging.error(f"Error in get_temperature_status: {str(e)}")
-        return [f"Require Manual Check"]
+        def add_status(sw: int, is_ok: bool):
+            # Original logic (includes all fan types)
+            fan_status_by_switch.setdefault(sw, []).append(is_ok)
+            
+        def add_chassis_status(sw: int, is_ok: bool):
+             # New logic for chassis/module fans only
+            chassis_fan_status_by_switch.setdefault(sw, []).append(is_ok)
 
-def get_fan_status(log_data: str):
-    """
-    Returns a list with one status per switch: ["OK", "Not OK", ...]
-    Supports:
-      - 16.x / 3.x: "Switch N FAN X is OK|NOT OK|NOT PRESENT"
-      - 17.x:       fan table under "Switch FAN Speed State Airflow direction"
-                    lines like: "<sw>  <rpm>  OK|NOT OK  <dir>"
-    Rules:
-      - NOT PRESENT is treated as OK for fan presence.
-      - If any fan line for a switch is NOT OK -> switch is Not OK.
-    If nothing found: ["Not available"]
-    """
-    try:
-        logging.info("Starting fan status extraction.")
-        per_switch_ok = {}
 
-        # --- 16.x / 3.x style: "Switch 1 FAN 2 is OK"
-        m_legacy = re.findall(r'(?mi)^\s*Switch\s+(\d+)\s+FAN\s+\d+\s+is\s+([A-Za-z ]+)\s*$', log_data)
-        if m_legacy:
-            tmp = {}
-            for sw_str, state_text in m_legacy:
-                sw = int(sw_str)
-                st = state_text.strip().upper()
-                # NOT PRESENT -> acceptable
-                is_ok = (st == "OK" or st == "NOT PRESENT")
-                prev = tmp.get(sw, True)
-                tmp[sw] = prev and is_ok
-            per_switch_ok.update(tmp)
+        env_data = extract_env_sections(log_data)
+        search_data = env_data if env_data else log_data
+        
+        # --- A) Legacy lines: "Switch 1 FAN 2 is OK" (Existing Logic, now calls both)
+        for sw_str, state_text in re.findall(
+            r'(?mi)^\s*Switch\s+(\d+)\s+FAN\s+\d+\s+is\s+([A-Za-z ]+)\s*$',
+            search_data,
+        ):
+            sw = int(sw_str)
+            ok_status = is_fan_ok(state_text)
+            add_status(sw, ok_status)
+            add_chassis_status(sw, ok_status) # <-- ENHANCEMENT
 
-        # --- 17.x style: "Switch FAN Speed State Airflow direction" block
-        # Lines look like: "  2    15458   OK Front to Back"
-        # We'll find the blocks and parse lines that start with a switch number.
-        if re.search(r'(?mi)^\s*Switch\s+FAN\s+Speed\s+State\s+Airflow\s+direction\s*$', log_data):
-            blocks = re.split(r'(?mi)^\s*Switch\s+FAN\s+Speed\s+State\s+Airflow\s+direction\s*$', log_data)
-            tmp = {}
-            for blk in blocks[1:]:
-                for raw in blk.splitlines():
-                    line = raw.strip()
-                    if not line or line.startswith('-'):
-                        continue
-                    cols = line.split()
-                    # Expect: <sw> <rpm> <state> <...>
-                    if len(cols) >= 3 and cols[0].isdigit() and cols[1].isdigit():
+        # --- A.1) NEW LOGIC: "FAN PS-N is OK" (Existing Logic, PS Fan, so only calls add_status) ---
+        for state_text in re.findall(
+            r'(?mi)^\s*FAN\s+PS-\d+\s+is\s+([A-Za-z ]+)\s*$',
+            search_data,
+        ):
+            add_status(1, is_fan_ok(state_text)) 
+
+        # --- A.2) ADDED LOGIC: "FAN is OK" (For single-switch/non-stacked outputs, now calls both) ---
+        for state_text in re.findall(
+            r'(?mi)^\s*FAN\s+is\s+([A-Za-z ]+)\s*$',
+            search_data,
+        ):
+            ok_status = is_fan_ok(state_text)
+            add_status(1, ok_status) 
+            add_chassis_status(1, ok_status) # <-- ENHANCEMENT
+            
+        # --- A.3) NEW LOGIC: "Fantray : Good" (For chassis fan trays, now calls both) ---
+        for state_text in re.findall(
+            r'(?mi)^\s*Fantray\s*:\s*([A-Za-z\s]+)\s*$',
+            search_data,
+        ):
+            ok_status = is_fan_ok(state_text)
+            add_status(1, ok_status) 
+            add_chassis_status(1, ok_status) # <-- ENHANCEMENT
+
+        # --- A.4) NEW LOGIC: Explicit "fan-fail: OK" lines (Cat6K/Cat6800 style) ---
+        # Matches patterns like: "switch 1 fan-tray 1 fan-fail: OK" and "switch 1 power-supply 1 fan-fail: OK"
+        fan_fail_pattern = r'(?mi)^\s*switch\s+(\d+)\s+(fan-tray|power-supply)\s+\d+.*fan-fail:\s*([A-Za-z\s]+)\s*$'
+        for sw_str, component_type, state_text in re.findall(fan_fail_pattern, search_data):
+            sw = int(sw_str)
+            ok_status = is_fan_ok(state_text)
+            
+            add_status(sw, ok_status) 
+            
+            if component_type.lower() == 'fan-tray':
+                add_chassis_status(sw, ok_status) # <-- ENHANCEMENT only for fan-tray
+
+
+        # --- B) Columnar Table format: "Switch FAN Speed State Airflow direction" (Existing Logic, now calls both)
+        blocks = re.split(
+            r'(?mi)^\s*Switch\s+FAN\s+Speed\s+State\s+Airflow\s+direction\s*$',
+            search_data,
+        )
+        for blk in blocks[1:]:
+             for raw in blk.splitlines():
+                 line = raw.strip()
+                 if not line or re.match(r'^\s*-{3,}', line) or re.search(r'(?i)^\s*(SW\s+PID|Sensor List:|NAME:|Interface|CPU|show\s+)', line):
+                     continue
+
+                 norm = re.sub(r'[\t ]+', ' ', line)
+                 cols = norm.split()
+
+                 if len(cols) >= 3 and cols[0].isdigit():
+                     sw = int(cols[0])
+                     state = None
+                     if cols[1].isdigit():
+                         state = cols[2].upper()
+                     elif len(cols) >= 4 and cols[2].isdigit():
+                         state = cols[3].upper()
+                     else:
+                         state = cols[2].upper()
+                         
+                     if state is not None and (is_fan_ok(state) or state in ["NOT", "FAULT", "FAILED", "NOT-OK", "SHUTDOWN"]):
+                         ok_status = is_fan_ok(state)
+                         add_status(sw, ok_status)
+                         add_chassis_status(sw, ok_status) # <-- ENHANCEMENT
+        
+        # --- B.1) NEW LOGIC: Columnar Table format: "Switch FAN Speed State" (No Airflow direction, now calls both) ---
+        blocks_no_airflow = re.split(
+            r'(?mi)^\s*Switch\s+FAN\s+Speed\s+State\s*$', 
+            search_data,
+        )
+        for blk in blocks_no_airflow[1:]:
+             for raw in blk.splitlines():
+                 line = raw.strip()
+                 if not line or re.match(r'^\s*-{3,}', line) or re.search(r'(?i)^\s*(SW\s+PID|Sensor List:|NAME:|Interface|CPU|show\s+)', line):
+                     continue
+
+                 norm = re.sub(r'[\t ]+', ' ', line)
+                 cols = norm.split()
+
+                 if len(cols) >= 3 and cols[0].isdigit():
+                     sw = int(cols[0])
+                     state = None
+                     if cols[1].isdigit():
+                         state = cols[2].upper()
+                     elif len(cols) >= 4 and cols[2].isdigit():
+                         state = cols[3].upper()
+                     else:
+                         state = cols[2].upper()
+                         
+                     if state is not None and (is_fan_ok(state) or state in ["NOT", "FAULT", "FAILED", "NOT-OK", "SHUTDOWN"]):
+                         ok_status = is_fan_ok(state)
+                         add_status(sw, ok_status)
+                         add_chassis_status(sw, ok_status) # <-- ENHANCEMENT
+                         
+        # --- C) RPM/PSx Sensor List Parsing (Existing Logic) ---
+        sensor_fan_pattern = re.compile(
+            r'^\s*PS\d+\s+FAN\s+.*?(\d+)\s+([A-Z\s]+)\s+.*$|' 
+            r'^\s*RPM:\s+fan\d+\s+.*?\s+([A-Z\s]+)\s+.*$|'
+            r'^\s*SYSTEM\s+(?:INLET|OUTLET|HOTSPOT)\s+(\d+)\s+([A-Z\s]+)\s+.*$'
+            , 
+            re.IGNORECASE | re.MULTILINE
+        )
+        
+        for match in sensor_fan_pattern.finditer(search_data):
+            # PSx FAN match (Only add to standard status)
+            if match.group(2) is not None:
+                sw = int(match.group(1)) 
+                state_text = match.group(2).strip()
+                add_status(sw, is_fan_ok(state_text))
+            
+            # RPM: fanX match (Chassis Fan - add to both)
+            elif match.group(3) is not None:
+                sw = 1 
+                state_text = match.group(3).strip()
+                ok_status = is_fan_ok(state_text)
+                add_status(sw, ok_status)
+                add_chassis_status(sw, ok_status) # <-- ENHANCEMENT
+            
+            # SYSTEM temp match (Temp status only affects overall if NOT OK)
+            elif match.group(5) is not None:
+                 sw = int(match.group(4)) 
+                 state_text = match.group(5).strip()
+                 if not is_fan_ok(state_text): 
+                     add_status(sw, is_fan_ok(state_text))
+            else:
+                continue 
+            
+        # --- D) Cisco Chassis (Cat9600) Fan/PS Table Parsing (Existing Logic) ---
+        switch_blocks = re.split(r'(?i)^\s*Switch:(\d+)\s*$', search_data, re.MULTILINE)
+        
+        for i in range(1, len(switch_blocks)):
+            block = switch_blocks[i] 
+            current_sw_id = i 
+
+            # D.1) Parse FAN TRAY (FM) table: (Chassis Fan - add to both)
+            fm_pattern = r'(?mi)^\s*FM\d+\s+(ok|not ok|good|not good|fault|failed)\s+([a-z\s]+)\s+([a-z\s]+)\s*([a-z\s]+)\s*([a-z\s]+)\s*$'
+            for match in re.findall(fm_pattern, block):
+                for state_text in match: 
+                    if state_text and state_text.strip():
+                        ok_status = is_fan_ok(state_text)
+                        add_status(current_sw_id, ok_status)
+                        add_chassis_status(current_sw_id, ok_status) # <-- ENHANCEMENT
+
+            # D.2) Parse Power Supply Fan States (PS) table: (PS Fan - only add to standard status)
+            ps_fan_pattern = r'(?mi)^\s*PS\d+\s+.*?\s+(ok|fail|not ok|failed)\s+([a-z\s]+)\s*([a-z\s]+)?\s*$'
+            for match in re.findall(ps_fan_pattern, block):
+                for state_text in match:
+                    if state_text and state_text.strip():
+                        add_status(current_sw_id, is_fan_ok(state_text))
+
+        # --- E) Switch FAN Speed State Table Parsing (Explicitly for the target format from last turn, now calls both) ---
+        fan_table_pattern = re.compile(
+            r'(?mi)^\s*Switch\s+FAN\s+Speed\s+State\s+Airflow\s+direction\s*\n\s*-+\s*\n' 
+            r'((?:\s+\d+\s+\d+\s+(?:OK|NOT\s+OK|FAULT|GOOD)\s+.*?\s*)+)'
+        )
+        for block_match in fan_table_pattern.finditer(search_data):
+            fan_data_block = block_match.group(1)
+            for raw_line in fan_data_block.splitlines():
+                line = raw_line.strip()
+                if line:
+                    norm = re.sub(r'\s{2,}', ' ', line)
+                    cols = norm.split(' ', 3)
+                    
+                    if len(cols) >= 3 and cols[0].isdigit():
                         sw = int(cols[0])
-                        st = cols[2].upper()  # <-- only the state token (e.g., "OK")
-                        is_ok = (st == "OK" or st == "NOT" or st == "PRESENT")  # keep lenient if vendors vary
-                        # Better: exact allow-list
-                        is_ok = (st == "OK")
-                        prev = tmp.get(sw, True)
-                        tmp[sw] = prev and is_ok
-            for sw, ok in tmp.items():
-                per_switch_ok[sw] = per_switch_ok.get(sw, True) and ok
-
-        if not per_switch_ok:
-            logging.debug("No fan patterns matched.")
-            return ["Not available"]
-
-        result = ["OK" if per_switch_ok[sw] else "Not OK" for sw in sorted(per_switch_ok.keys())]
-        logging.debug("Fan status extraction completed.")
-        return result if result else ["Not available"]
-
-    except Exception as e:
-        logging.error(f"Error in get_fan_status: {str(e)}")
-        return [f"Require Manual Check"]
-
-def get_power_supply_status(log_data: str):
-    """
-    Returns a list of statuses per switch.
-      - "OK" if all present PSUs are OK.
-      - "Not Present" if any PSU is missing (but no failures).
-      - "NOT OK" if any PSU reports a bad state.
-      - "UNKNOWN" if unrecognized states.
-      - ["Not available"] if no PSU table found.
-    """
-    try:
-        logging.info("Starting power supply status extraction")
-        lines = log_data.splitlines()
-        per_switch_slots = {}   # sw -> list of status strings
-        in_psu_table = False
-
-        header_re = re.compile(r'(?mi)^\s*SW\s+PID\s+.*Serial#\s+.*Status')
-        row_slot_re = re.compile(r'^\s*(\d+[A-Z])\b', re.IGNORECASE)
-
-        for idx, line in enumerate(lines):
-            if not in_psu_table:
-                if header_re.search(line):
-                    in_psu_table = True
-                    logging.debug(f"Found PSU table header at line {idx}: {line.strip()}")
-                    continue
-            else:
-                if not line.strip() or re.search(r'-{3,}', line) or line.strip().startswith(('Sensor List:', 'Switch FAN')):
-                    continue
-
-                m = row_slot_re.match(line)
-                if not m:
-                    continue
-
-                slot = m.group(1).upper()
-                sw = int(slot[:-1])
-                norm = line.strip()
-                status = ""
-
-                if re.search(r'(?i)\bNot\s+Present\b', norm):
-                    status = "Not Present"
-                elif re.search(r'(?i)\bOK\b', norm):
-                    status = "OK"
-                elif re.search(r'(?i)\b(BAD|FAIL|NO\s+INPUT\s+POWER|ALARM)\b', norm):
-                    status = "NOT OK"
+                        state_check = cols[2].split(' ')[0].upper()
+                        
+                        if is_fan_ok(state_check) or state_check in ["NOT", "FAULT", "FAILED", "NOT-OK", "SHUTDOWN"]:
+                            ok_status = is_fan_ok(state_check)
+                            add_status(sw, ok_status)
+                            add_chassis_status(sw, ok_status) # <-- ENHANCEMENT
+                            
+        # --- F) NEW CONDITION: Generic Sensor List Parsing (Cat9K style) ---
+        sensor_state_pattern_f = re.compile(
+            r'(?mi)^\s*[A-Za-z: ]+?\s+(Switch(\d+)[-/\w\s]+?)\s+([A-Z\s]+)\s+.*$',
+            re.IGNORECASE | re.MULTILINE
+        )
+        for match in sensor_state_pattern_f.finditer(search_data):
+            try:
+                sw = int(match.group(2)) 
+                state_text = match.group(3).strip()
+                
+                # Check for fan sensor (Chassis Fan - add to both, only if not explicitly PS)
+                if "FAN" in match.group(1).upper() and "PS" not in match.group(1).upper():
+                    ok_status = is_fan_ok(state_text)
+                    add_status(sw, ok_status)
+                    add_chassis_status(sw, ok_status) # <-- ENHANCEMENT for non-PS fan
                 else:
-                    status = "UNKNOWN"
+                    # Non-fan/PS status (e.g., temp/other or PS fan)
+                    add_status(sw, is_fan_ok(state_text)) 
+            except ValueError:
+                pass
+        # ---------------------------------------------------------------------
 
-                logging.debug(f"Parsed line {idx}: slot={slot}, sw={sw}, status={status}")
-                per_switch_slots.setdefault(sw, []).append((slot, status))
+        # --- G) Final Report (Aggregation) ---
+        
+        # 1. Determine which status list to use for each switch.
+        #    Prioritize chassis-only status if available (to ignore faulty PS fans)
+        
+        status_to_report: Dict[int, List[bool]] = {}
+        all_switches = set(fan_status_by_switch.keys()) | set(chassis_fan_status_by_switch.keys())
+        
+        for sw in sorted(all_switches):
+            # If any chassis-only fan statuses were found for this switch, use them (This fulfills the user's request)
+            if sw in chassis_fan_status_by_switch and chassis_fan_status_by_switch[sw]:
+                status_to_report[sw] = chassis_fan_status_by_switch[sw]
+            # Otherwise, fall back to the full status list (Preserving old logic for logs without chassis fan details)
+            elif sw in fan_status_by_switch:
+                status_to_report[sw] = fan_status_by_switch[sw]
 
-        if not per_switch_slots:
-            logging.warning("No PSU table rows matched")
+
+        if not status_to_report:
             return ["Not available"]
 
-        result = []
-        for sw in sorted(per_switch_slots.keys()):
-            slots = per_switch_slots[sw]
-            logging.debug(f"Evaluating Switch {sw} with slots: {slots}")
-
-            if any(status == "NOT OK" for _, status in slots):
-                bad_slot = next(slot for slot, status in slots if status == "NOT OK")
-                result.append(f"{bad_slot}: NOT OK")
-                logging.info(f"Switch {sw} -> {bad_slot}: NOT OK")
-            elif any(status == "Not Present" for _, status in slots):
-                missing_slot = next(slot for slot, status in slots if status == "Not Present")
-                result.append(f"{missing_slot}: Not Present")
-                logging.info(f"Switch {sw} -> {missing_slot}: Not Present")
-            elif all(status == "OK" for _, status in slots):
-                ok_slot = ", ".join(slot for slot, _ in slots)
-                result.append("OK")
-                logging.info(f"Switch {sw} -> All OK ({ok_slot})")
-            else:
-                result.append("UNKNOWN")
-                logging.info(f"Switch {sw} -> UNKNOWN")
-
-        logging.info("Completed power supply status extraction")
-        return result
+        final_status: List[str] = []
+        
+        for sw in sorted(status_to_report.keys()):
+            statuses = status_to_report[sw]
+            all_fans_ok = all(statuses) 
+            final_status.append("OK" if all_fans_ok else "NOT OK")
+            
+        return final_status
 
     except Exception as e:
-        logging.error(f"Error in get_power_supply_status: {str(e)}", exc_info=True)
-        return [f"Require Manual Check"]
+        return [f"Require Manual Check (Error: {e})"]
+
+def show_env(log_data):
+    show_env_start_index = re.search("show environment", log_data).group(1)
+    show_env_end_index = re.search("show", log_data[show_env_start_index:])
+    required_section = log_data[show_env_start_index:show_env_start_index + show_env_end_index]
+    return required_section
+ 
+def get_power_supply_status(log_data: str) -> list[str]:
+    logging.info("Starting power supply status extraction")
+
+    lines = log_data.splitlines()
+    header_re = re.compile(r'(?i)^\s*SW\s+PID\s+.*Serial#\s+.*Status\b')
+    # Require 1–2 digit stack id, slot A|B, and at least one space before the rest of columns
+    row_re = re.compile(r'^\s*(?P<sw>\d{1,2})(?P<bay>[AB])\s+(?P<rest>.+)$')
+
+    severity = {"OK": 0, "Not Present": 1, "NOT OK": 2, "UNKNOWN": -1}
+
+    in_table = False
+    rows_started = False
+    per_switch = {}  # sw -> list[(slot, status)]
+
+    for idx, line in enumerate(lines):
+        if not in_table:
+            if header_re.search(line):
+                in_table = True
+                rows_started = False
+                logging.debug(f"Found PSU table header at line {idx}: {line.strip()}")
+            continue
+
+        # Skip divider lines inside the table
+        if re.match(r'^\s*-{3,}\s*$', line):
+            continue
+
+        if not rows_started:
+            m = row_re.match(line)
+            if m:
+                rows_started = True
+            else:
+                # header area noise; a blank line before rows ends the table
+                if not line.strip():
+                    logging.debug(f"Blank line before first row at {idx}; exiting table")
+                    in_table = False
+                continue
+
+        # If rows have started, stop at blank line or first non-row
+        if not line.strip():
+            logging.debug(f"Blank line after rows at {idx}; exiting table")
+            break
+        m = row_re.match(line)
+        if not m:
+            logging.debug(f"Non-row encountered at {idx}; exiting table: {line.strip()}")
+            break
+
+        sw = int(m.group('sw'))          # guard: only 1–2 digits allowed
+        bay = m.group('bay').upper()
+        slot = f"{sw}{bay}"
+        norm = m.group('rest').strip()
+
+        if re.search(r'(?i)\bNot\s+Present\b', norm):
+            status = "Not Present"
+        elif re.search(r'(?i)\b(BAD|FAIL|NO\s+INPUT\s+POWER|ALARM)\b', norm):
+            status = "NOT OK"
+        elif re.search(r'(?i)\bOK\b', norm):
+            status = "OK"
+        else:
+            status = "UNKNOWN"
+
+        logging.debug(f"Parsed line {idx}: slot={slot}, sw={sw}, status={status}")
+        per_switch.setdefault(sw, []).append((slot, status))
+
+    if not per_switch:
+        logging.warning("No PSU table rows matched")
+        logging.info("Completed power supply status extraction")
+        return ["Not available"]
+
+    # Consolidate per switch: take the worst status; include slot for non-OK
+    result: list[str] = []
+    for sw in sorted(per_switch.keys()):
+        slots = per_switch[sw]
+        worst_slot, worst_status = max(slots, key=lambda ss: severity.get(ss[1], -1))
+
+        if worst_status == "OK":
+            if all(s == "OK" for _, s in slots):
+                result.append("OK")
+                logging.info(f"Switch {sw} -> All OK ({', '.join(sl for sl, _ in slots)})")
+            else:
+                # OK mixed with UNKNOWN -> OK; otherwise worst already covers it
+                if any(s not in ("OK", "UNKNOWN") for _, s in slots):
+                    result.append(f"{worst_slot}: {worst_status}")
+                    logging.info(f"Switch {sw} -> {worst_slot}: {worst_status}")
+                else:
+                    result.append("OK")
+                    logging.info(f"Switch {sw} -> OK (with UNKNOWN present)")
+        else:
+            result.append(f"{worst_slot}: {worst_status}")
+            logging.info(f"Switch {sw} -> {worst_slot}: {worst_status}")
+
+    logging.info("Completed power supply status extraction")
+    return result
 
 def get_debug_status(log_data):
     try:
@@ -779,39 +1700,52 @@ def get_debug_status(log_data):
 def get_available_ports(log_data):
     try:
         logging.info("Starting available ports extraction.")
-        start_marker = "------------------ show interfaces status ------------------"
-        end_marker = "------------------ show "
+        start_marker = r"-{18}\s+show\s+interfaces?\s+status\s+-{18}"
+        end_marker = r"-{18}\s+show\s+"
         
-        match = re.search(f"{re.escape(start_marker)}(.*?){re.escape(end_marker)}", log_data, re.DOTALL)
-        if match:
-            section = match.group(1)
-            ports = {}
-            for line in section.strip().splitlines()[1:]:
-                parts = line.split()
-                # Keep original selection logic exactly as-is: requires 'notconnect' and '1' present
-                if 'notconnect' in parts and '1' in parts:
-                    try:
-                        interface = parts[0]
-                        # Keep original normalization (Po excluded, Gi/Te/Ap supported)
-                        switch_number = int(interface.split('/')[0].replace('Gi', '').replace('Te', '').replace('Ap', ''))
-                        if switch_number not in ports:
-                            ports[switch_number] = []
-                        ports[switch_number].append(interface)
-                    except (ValueError, IndexError):
-                        continue
-
-            # Build per-switch counts with stable [[int]] shape
-            max_switch = max(ports.keys()) if ports else 0
-            if max_switch > 0:
-                port_list = [[int(len(ports.get(i, [])))] for i in range(1, max_switch + 1)]
-                logging.debug("Available ports extraction completed.")
-                return port_list
-
-            logging.debug("No available ports found in log data.")
-            return [[0]]
-        else:
+        # Find the start marker first
+        start_match = re.search(start_marker, log_data)
+        if not start_match:
             logging.debug("No available ports section found in log data.")
             return [[0]]
+        
+        # Get position after start marker
+        start_pos = start_match.end()
+        
+        # Search for end marker ONLY in text after start marker
+        end_match = re.search(end_marker, log_data[start_pos:])
+        
+        if end_match:
+            # Extract section between start and end
+            section = log_data[start_pos:start_pos + end_match.start()]
+        else:
+            # No end marker found, take everything after start
+            section = log_data[start_pos:]
+        
+        ports = {}
+        for line in section.strip().splitlines()[1:]:
+            parts = line.split()
+            # Keep original selection logic exactly as-is: requires 'notconnect' and '1' present
+            if 'notconnect' in parts and '1' in parts:
+                try:
+                    interface = parts[0]
+                    # Keep original normalization (Po excluded, Gi/Te/Ap supported)
+                    switch_number = int(interface.split('/')[0].replace('Gi', '').replace('Te', '').replace('Ap', ''))
+                    if switch_number not in ports:
+                        ports[switch_number] = []
+                    ports[switch_number].append(interface)
+                except (ValueError, IndexError):
+                    continue
+
+        # Build per-switch counts with stable [[int]] shape
+        max_switch = max(ports.keys()) if ports else 0
+        if max_switch > 0:
+            port_list = [[int(len(ports.get(i, [])))] for i in range(1, max_switch + 1)]
+            logging.debug("Available ports extraction completed.")
+            return port_list
+
+        logging.debug("No available ports found in log data.")
+        return [[0]]
     except Exception as e:
         logging.error(f"Error in get_available_ports: {str(e)}")
         # Preserve original error signaling shape
@@ -988,7 +1922,7 @@ def process_file(file_path, text: str | None = None):
                 "Production s/w is deffered or not?": ["Yet to check"],
                 "End-of-Sale Date: HW": ["Yet to check"],
                 "Last Date of Support: HW": ["Yet to check"],
-                "End of Routine Failure Analysis Date:  HW": ["Yet to check"],
+                "End of Routine Failure Analysis Date: HW": ["Yet to check"],
                 "End of Vulnerability/Security Support: HW": ["Yet to check"],
                 "End of SW Maintenance Releases Date: HW": ["Yet to check"],
                 "Remark": ["Yet to check"]
@@ -1084,7 +2018,7 @@ def process_file(file_path, text: str | None = None):
             data["Production s/w is deffered or not?"] = ["Yet to check"] * current_stack_size  # ← FIXED
             data["End-of-Sale Date: HW"] = ["Yet to check"] * current_stack_size  # ← FIXED
             data["Last Date of Support: HW"] = ["Yet to check"] * current_stack_size  # ← FIXED
-            data["End of Routine Failure Analysis Date:  HW"] = ["Yet to check"] * current_stack_size  # ← FIXED
+            data["End of Routine Failure Analysis Date: HW"] = ["Yet to check"] * current_stack_size  # ← FIXED
             data["End of Vulnerability/Security Support: HW"] = ["Yet to check"] * current_stack_size  # ← FIXED
             data["End of SW Maintenance Releases Date: HW"] = ["Yet to check"] * current_stack_size  # ← FIXED
             data["Remark"] = ["Yet to check"] * current_stack_size  # ← FIXED
@@ -1092,6 +2026,46 @@ def process_file(file_path, text: str | None = None):
         return data
     except Exception as e:
         logging.error(f"Error in process_file: {str(e)}")
+        return {
+            "File name": [get_ip_address(file_path)[0] if file_path else "Unknown"],
+            "Host name": ["Require Manual Check"],
+            "Model number": ["Require Manual Check"],
+            "Serial number": ["Require Manual Check"],
+            "Interface ip address": [get_ip_address(file_path)[1] if file_path else "Unknown"],
+            "Uptime": ["Require Manual Check"],
+            "Current s/w version": ["Require Manual Check"],
+            "Last Reboot Reason": ["Require Manual Check"],
+            "Any Debug?": ["Require Manual Check"],
+            "CPU Utilization": ["Require Manual Check"],
+            "Total memory": ["Require Manual Check"],
+            "Used memory": ["Require Manual Check"],
+            "Free memory": ["Require Manual Check"],
+            "Memory Utilization (%)": ["Require Manual Check"],
+            "Total flash memory": ["Require Manual Check"],
+            "Used flash memory": ["Require Manual Check"],
+            "Free flash memory": ["Require Manual Check"],
+            "Used Flash (%)": ["Require Manual Check"],
+            "Fan status": ["Require Manual Check"],
+            "Temperature status": ["Require Manual Check"],
+            "PowerSupply status": ["Require Manual Check"],
+            "Available Free Ports": ["Require Manual Check"],
+            "Any Half Duplex": ["Require Manual Check"],
+            "Interface/Module Remark": ["Require Manual Check"],
+            "Config Status": ["Require Manual Check"],
+            "Config Save Date": ["Require Manual Check"],
+            "Critical logs": [f"process_file failed: {e}"],
+            "Current SW EOS": ["Yet to check"],
+            "Suggested s/w ver": ["Yet to check"],
+            "s/w release date": ["Yet to check"],
+            "Latest S/W version": ["Yet to check"],
+            "Production s/w is deffered or not?": ["Yet to check"],
+            "End-of-Sale Date: HW": ["Yet to check"],
+            "Last Date of Support: HW": ["Yet to check"],
+            "End of Routine Failure Analysis Date: HW": ["Yet to check"],
+            "End of Vulnerability/Security Support: HW": ["Yet to check"],
+            "End of SW Maintenance Releases Date: HW": ["Yet to check"],
+            "Remark": [f"Require Manual Check (IOSXE parser exception: {e})"],
+        }
         # print(f"Error in process_file: {str(e)}")
 
 def ios_xe_check(log_data):
@@ -1179,11 +2153,6 @@ def process_directory(directory_path):
         return "Require Manual Check"
     
 def _placeholder_entry(file_path, reason_text="Non-IOS_XE"):
-    """
-    One-row data dict for files that were skipped or failed.
-    For Non-IOS-XE rows we fill ALL attributes with 'Unsupported IOS'.
-    """
-    import os
     try:
         fname, _ = get_ip_address(file_path)  # we will not show IP for unsupported rows
     except Exception:
@@ -1226,24 +2195,30 @@ def _placeholder_entry(file_path, reason_text="Non-IOS_XE"):
         "Production s/w is deffered or not?": [U],
         "End-of-Sale Date: HW": [U],
         "Last Date of Support: HW": [U],
-        "End of Routine Failure Analysis Date:  HW": [U],
+        "End of Routine Failure Analysis Date: HW": [U],
         "End of Vulnerability/Security Support: HW": [U],
         "End of SW Maintenance Releases Date: HW": [U],
         "Remark": ["Non-IOS_XE"],
     }
 
 def main():
-    try:
-        # file_path = r""
-        directory_path = r""
-        data = process_directory(directory_path)
-        # print_data(data)
-        for item in data:
-            # print(item["Interface ip address"])
-            print_data(item)
-        # pp.pprint(data["Interface ip address"])
-    except Exception as e:
-        print(f"Error in main: {str(e)}")
+    data = []
+    # data = process_directory(r"C:\Users\girish.n\Downloads\OneDrive_2_13-10-2025 1")
+    # with open (r"C:\Users\girish.n\Downloads\OneDrive_2025-11-18 1\Cisco R&S\TH-MUDA-WHC9407R-01.txt", 'r', errors='ignore') as f:
+    #     log_data = f.read()
+    #     hostname = get_hostname(log_data)
+    #     model_number = get_model_number(log_data)
+    #     serial_number = get_serial_number(log_data)
+    # print(hostname)
+    # print(model_number)
+    # print(serial_number)
+    data = process_file(file_path = r"C:\Users\girish.n\Downloads\OneDrive_2025-11-18 1\Cisco R&S\TH-MUDA-WHC9407R-01.txt")
+    print_data(data)
+    # for item in data:
+    #     print_data(item['File name'])
+    #     print(item['PowerSupply status'])
+    #     # print(item['Fan status'])
+    #     # print(item['Temperature status'])
 
 if __name__ == "__main__":
     main()

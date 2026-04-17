@@ -3,6 +3,9 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
+*.pyd
+*.cpython-*.pyc
 
 # C extensions
 *.so
@@ -257,15 +260,16 @@ fabric.properties
 # End of https://www.toptal.com/developers/gitignore/api/pycharm+all
 
 credentials.py
-test.py
 test.html
 DNAC_Data_Ret.py
 Test WLC 5508/
 test_IOS.py
 test_stack.py
-test_data_to_excel.py
+PM_Report/Switching/test_data_to_excel.py
 
 Log_samples/
+Logs/
+EOX_logs/
 
 Temp/
 Cisco 3750 switch.py
@@ -274,16 +278,31 @@ Coding progress_Live_notes.txt
 
 Database/Remarks.py
 Database/auto_pop_enhanced.py
+Database/JSON_Files/new_eox_pid.json
 EOX/RAiU_API.py
 EOX/result.json
 EOX/test.py
 EOX/scrap.py
+EOX/API_Test.py
 EOX/Crediability.json
 WebPage/backup.py
+WebPage/test.py
 PM_Report/Switching/Cisco_9000_switch.py
+PM_Report/test.py 
+PM_Report/Switching/ios/test.py
+PM_Report/Switching/ios_xe/test.py
+PM_Report/Wireless/WLC/test.py
+PM_Report/Switching/test_IOS.py  
+PM_Report/Switching/test_data_to_excel_IOS.py  
 example_ticket.xlsx
 updated_output.xlsx
 PM_Report/Switching/Cisco 9000 switch.py
 uploads/
-PM_Report\Switching\remark.py
+PM_Report/Switching/remark.py
 Django/
+PM_Report/Switching/test.py
+PM_Report/Switching/test_IOS
+PM_Report/Switching/test_data_to_excel
+PM_Report/WebPage/SVR2_analysis.xlsx
+PM_Report/WebPage/SVR3_analysis.xlsx
+PM_Report/WebPage/SVR1_analysis.xlsx

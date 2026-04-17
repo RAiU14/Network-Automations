@@ -1,58 +1,63 @@
 # Cisco_Automations
-A set of python program files which can be used smartly and efficiently to make things easier! 
 
->**Cisco EOX Package**  
-> A series of programs that will help you with your program without the need for API. 
-> Cisco EOX: WebScrapping Tool to obtain your details EOX Details for devices easily. (Faster than loading the WebPages!)
+A collection of Python utilities designed to automate repetitive Cisco network engineering tasks. The goal of this repository is to provide **smart and efficient scripts** that save time, reduce manual effort, and improve consistency in day-to-day operations.
 
-> **Goal:** To gather End-of-Life (EOX) details about for all Cisco device by passing the product/model number as input — using only **web scraping techniques** (no API required).
+---
 
-> ⚙️ This was developed purely as a **personal/learning project** to help automate tedious manual lookups and speed up engineering workflows.
+## Cisco EOX Package (Web Scraping)
 
-> ⚠️ **Disclaimer:**  
-> This tool is **not affiliated with or endorsed by Cisco**. All data is sourced from publicly available information on Cisco’s website.  
-> I do **not take any responsibility** for how this tool is used — especially for **commercial purposes**, product sales, or automation in production environments. Use it at your own discretion and risk.  
-> Always validate EOX details directly from [Cisco's official website](https://www.cisco.com) before making any business decisions.
-> Use requirements.txt to install all the dependencies for the program to work.
-> Cisco PID: A simple program tool to smartly figure out the device series and to check in the product page. 
+The **Cisco EOX Package** provides a set of programs to extract End-of-Life (EOX) details for Cisco products **without relying on Cisco’s APIs**.  
 
+Instead, the package uses **web scraping techniques** to retrieve information faster than manually navigating Cisco web pages.
 
->**Connection.py**  
-> Has the necessary snippet to connect to the network to run the netmiko commands.
+### Key Features
+- Input: Cisco **product ID** or **model number**  
+- Output: EOX details, including end-of-sale, end-of-support, and lifecycle milestones  
+- No API keys or credentials required  
+- Faster than loading and searching through Cisco’s web UI  
 
->**Log_Capture.py**  
-> Gather logs from a cisco switches (devices) in bulk amount, by passing the IP Address and the required show commands.
-> The logs files will be saved by the device hostname.
+### Goals
+- Automate tedious manual lookups for Cisco lifecycle data  
+- Help engineers quickly gather accurate EOX details for devices in bulk  
+- Provide a lightweight alternative when APIs are not accessible  
 
+### Disclaimer
+This tool is:  
+- **Not affiliated with or endorsed by Cisco**  
+- Dependent on publicly available information from Cisco’s website  
 
->**Alive_Checks.py**  
-> [Uses inbuilt Python Functions]
-> Have a bulk load of devices to verify if they are connected to the network and up?
-> Performing a simple OS check before pinging the device or devices. 
-> You can use the provided functions to simply check for their remote reachability status with or without the jumphost. 
+Users must **validate results directly** from [Cisco’s official website](https://www.cisco.com) before making any business or operational decisions. The author does **not accept responsibility** for misuse, especially in production or commercial settings.
 
->**Database Directory**
-> Created two files, Database.py and EOX.db
-> Database.py is coded to take input from the user, the user input is set as primary key.
-> Based on the user input, data associated to the primary key is fetched from the databse EOX.db and displayed as output to the user.
-> Added few extra lines of code to the same Database.py file to achieve the results which were obtained through database/SQL, but by using CSV file.
-> Added few extra lines of code to the same Database.py file to achieve the results which were obtained through database/SQL, but by using json.
-> Revisted the SQL section to add the edit functionality to the existing data in a table.
-> Edited retrieve function of SQL section to accomodate visually appealing and easy to read output format.
+---
 
-> Further edits staged to implement edit functionality in the CSV section.
-[WIP]
+## PM_Report Module
 
-> **auto_pop.py**
-A program to automatically retreive all available EOX mentioned data from the Cisco Portal using EOX Package. 
+The **PM_Report** folder contains scripts for generating **Preventive Maintenance (PM) reports** across multiple vendors and technologies. These reports are designed to provide quick insights into device health and operational readiness.
 
-**PM_Report folder**
-> Contails python scripts to gather Health parameters of Network applaince based on individual technology and vendor.
-> Currently, sripts are in phase 1 i.e., need further enhancement.
-> Provides basic information by analysing log data, and marks unavailable data as 'NA'
-> Further information will be available as the progression contunues - [WIP]
-> what si working? known errors? what is pending?
+### Features
+- Collects health parameters from network appliances (currently in **Phase 1**)  
+- Analyzes log data to produce structured summaries  
+- Marks missing or unavailable information clearly as `NA`  
+- Modular design allows for vendor-specific or technology-specific expansion  
 
+### Current Status
+- **Working:**  
+  - Basic log parsing and extraction  
+  - Health parameter reporting framework  
+  - Error flagging with simple categorization  
 
+- **Known Limitations / Issues:**  
+  - Some advanced metrics and vendor-specific parameters are not yet supported  
+  - Data enrichment is limited to available log content  
 
-Note: The .gitignore file have been created with the help of gitignore.io website
+- **Planned Enhancements (WIP):**  
+  - Support for more vendor log formats  
+  - Richer error categorization and severity levels  
+  - Improved output formatting for readability and presentation  
+  - Integration with CSV/JSON/Database outputs for archiving and analytics  
+
+---
+
+## Notes
+- Use the `requirements.txt` file to install dependencies before running any scripts.  
+- Contributions and suggestions for improvements are welcome.  

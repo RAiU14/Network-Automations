@@ -1,0 +1,72 @@
+/* Reports.css */
+.reports-container {
+    padding: 2rem;
+}
+
+.reports-header {
+    margin-bottom: 2rem;
+}
+
+.reports-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+}
+
+.upload-section, .status-section {
+    padding: 2rem;
+    min-height: 400px;
+}
+
+.upload-btn {
+    background: var(--accent-gradient);
+    border: none;
+    padding: 1rem;
+    width: 100%;
+    color: white;
+    border-radius: 8px;
+    margin-top: 1rem;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.status-card {
+    background: rgba(255, 255, 255, 0.05);
+    border-left: 4px solid var(--accent);
+    padding: 1.5rem;
+    border-radius: 8px;
+}
+
+.status-card.completed { border-color: #00ff88; }
+.status-card.processing { border-color: #00d4ff; }
+
+/* EOX.css */
+.eox-container {
+    padding: 2rem;
+}
+
+.eox-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.5fr;
+    gap: 2rem;
+}
+
+.milestone-list {
+    margin-top: 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.milestone-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 1rem;
+    background: rgba(255,255,255,0.03);
+    border-radius: 8px;
+}
+
+.m-date {
+    color: var(--accent);
+    font-weight: 500;
+}

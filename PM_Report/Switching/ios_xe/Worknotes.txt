@@ -1,0 +1,114 @@
+Odd show env section:
+> Chassis Type : WS-C4507R+E 
+======================================================================= 
+4507ITCF_MB_ProdCore#sh power
+
+Executing the command on VSS member switch role = VSS Active, id = 2
+
+
+Power                                             Fan      Inline
+Supply  Model No          Type       Status       Sensor   Status
+------  ----------------  ---------  -----------  -------  -------
+PS1     PWR-C45-2800AC    AC 2800W   good         good     good   
+PS2     PWR-C45-2800AC    AC 2800W   good         good     good   
+
+Power supplies needed by system    : 1
+Power supplies currently available : 2
+
+Power Summary                      Maximum
+ (in Watts)              Used     Available
+----------------------   ----     ---------
+System Power (12V)        866        1360
+Inline Power (-50V)         0        1400
+Backplane Power (3.3V)     40          40
+----------------------   ----     ---------
+Total                     906        2800
+
+
+
+Executing the command on VSS member switch role = VSS Standby, id = 1
+
+
+Power                                             Fan      Inline
+Supply  Model No          Type       Status       Sensor   Status
+------  ----------------  ---------  -----------  -------  -------
+PS1     PWR-C45-2800AC    AC 2800W   good         good     good   
+PS2     PWR-C45-2800AC    AC 2800W   good         good     good   
+
+Power supplies needed by system    : 1
+Power supplies currently available : 2
+
+Power Summary                      Maximum
+ (in Watts)              Used     Available
+----------------------   ----     ---------
+System Power (12V)        866        1360
+Inline Power (-50V)         0        1400
+Backplane Power (3.3V)     40          40
+----------------------   ----     ---------
+Total                     906        2800
+
+
+4507ITCF_MB_ProdCore#
+======================================================================= 
+
+
+1. .txt and .log
+2. flat 
+3. nope only ending with .txt or .log
+4. none as of now
+
+5. COLUMNS = [
+    'File name','Host name','Model number','Serial number','Interface ip address',
+    'Uptime','Current s/w version','Current SW EOS','Suggested s/w ver','s/w release date',
+    'Latest S/W version','Production s/w is deffered or not?','Last Reboot Reason','Any Debug?',
+    'CPU Utilization','Total memory','Used memory','Free memory','Memory Utilization (%)',
+    'Total flash memory','Used flash memory','Free flash memory','Used Flash (%)',
+    'Fan status','Temperature status','PowerSupply status','Available Free Ports',
+    'End-of-Sale Date: HW','Last Date of Support: HW','End of Routine Failure Analysis Date:  HW',
+    'End of Vulnerability/Security Support: HW','End of SW Maintenance Releases Date: HW',
+    'Any Half Duplex','Interface/Module Remark','Config Status','Config Save Date','Critical logs','Remark'
+]
+PLACEHOLDER_DEFAULT = 'Not available'
+
+6. stick column namings as it is. other than that nothing or I didnt undertsand ur query properly.
+7. keeping duplicate rows for now, but planning to merge if any occurs(thats for another story)
+8. no
+
+9. everything from columns except['Current SW EOS','Suggested s/w ver','s/w release date',
+    'Latest S/W version','Production s/w is deffered or not?','End-of-Sale Date: HW','Last Date of Support: HW','End of Routine Failure Analysis Date:  HW',
+    'End of Vulnerability/Security Support: HW','End of SW Maintenance Releases Date: HW']
+10. yes, there is a pipeline differentiating that part. I can give u code of pipeline and relevant files, let me know.
+11. regex
+    somtimes as strategy: starting index and ending index(using regex again), then travese or retrive desired value from this section
+	the more u will understand by looking at the code maybe...
+12. That I dono, so this is for creating PM report which is basically preventive maitanance performed on regular intervals...
+    >> FE goes on site, colects logs and pass the information to remote engineer who has to create report with so and so columns. Now my intention is to minimise manual work by automating into python script.
+	>> comeing back to context, the max number of log file we recieve is not more than 500, which can stretch upto 750 rows(never seen something that huge until today though)
+
+13. right now  doing one file at a time, cause of many reasons....
+    >> to find which type of version
+	>> is it stack or not?
+	>> some other which i cant rememeber now.
+	
+14. i have implemented threading to multi process through files parellelly, if that is wt u asking.
+15. everthing is try-catch blocks with relatime logging hard coded
+16. u get it for controller as well as each file that are dependent.
+17. it will retrun placeholder on worst scneario.
+18. list[dict[list]]]
+19. idk at u aksed
+20. not there yet, ready to take suggestion(bbut again this is for another day story)
+21. idk wt it means
+22. dono again
+23. its basically logs.... so im not sure how this encoding comes to picture
+24. not sure
+
+25. not sure.
+26. THIS IS WHERE OUR FOCUS SHOULD PRIMARYLIY BE. cause I have json files of pattern for each column vlue, so might need ur help to craeted regex or some logic that works.... Remember let talk abt this again
+27. deterministic ig
+28. not right now, can be another day story
+29. yes, that u will understand from relevent code
+30. getting logs, final product excel to end user
+31. IST, cause that is wt default taken
+	
+
+

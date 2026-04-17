@@ -1,0 +1,120 @@
+.analytics-container {
+  padding-left: 270px;
+  padding-right: 2rem;
+  padding-top: 2rem;
+  max-width: calc(100vw - 250px);
+}
+
+.analytics-header {
+  margin-bottom: 2.5rem;
+}
+
+.analytics-grid {
+  display: grid;
+  grid-template-columns: 2fr 1.25fr;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.chart-large {
+  padding: 2rem;
+  border-radius: 24px;
+  height: 500px;
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-large h3 {
+  margin-bottom: 1.5rem;
+}
+
+.chart-container {
+  flex: 1;
+  min-height: 0;
+}
+
+.summary-side {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.chart-small {
+  padding: 1.5rem;
+  border-radius: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.pie-wrapper {
+  width: 180px;
+  height: 180px;
+  margin: 1.5rem 0;
+}
+
+.pie-labels {
+  display: flex;
+  flex-direction: column;
+}
+
+.pie-labels .percentage {
+  font-size: 2.5rem;
+  font-weight: 800;
+  color: #10b981;
+}
+
+.pie-labels .label {
+  font-weight: 600;
+  color: var(--text-secondary-dark);
+}
+
+.recent-activity {
+  padding: 1.5rem;
+  border-radius: 24px;
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+}
+
+.activity-item {
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem;
+  border-left: 2px solid var(--accent);
+  background: hsla(var(--hue), 25%, 15%, 0.4);
+  border-radius: 0 8px 8px 0;
+}
+
+.activity-item .time {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.activity-item .msg {
+  font-size: 0.8rem;
+  color: var(--text-secondary-dark);
+}
+
+@media (max-width: 1024px) {
+  .analytics-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .analytics-container {
+    padding-left: 80px;
+  }
+}

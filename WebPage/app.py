@@ -45,19 +45,16 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 # CREATE THREAD POOL FOR CONCURRENT PROCESSING
 executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="UploadProcessor")
 logging.info("ThreadPoolExecutor initialized with 10 workers for concurrent processing")
-
 logging.info("Flask app created successfully")
 
 # Add validation function
 def validate_ticket_number(ticket: str) -> bool:
-    """Validate ticket number format"""
     if not ticket:
         return False
     pattern = r'^SVR\d+$'
     return bool(re.match(pattern, ticket))
 
 def check_existing_ticket(ticket: str) -> dict:
-    """Check if ticket already exists and return detailed status"""
     ticket_folder = os.path.join(UPLOAD_FOLDER, ticket)
     excel_file = os.path.join(ticket_folder, f"{ticket}_analysis.xlsx")
     zip_file = os.path.join(ticket_folder, f"{ticket}.zip")
@@ -107,7 +104,6 @@ def check_existing_ticket(ticket: str) -> dict:
     return status
 
 def async_process_upload(form_data, file_path, upload_folder, overwrite_existing=False):
-    """Process upload in background thread - non-blocking"""
     try:
         logging.info(f"[CONCURRENT] Starting background processing for ticket: {form_data['ticket']}")
         logging.info(f"[CONCURRENT] Overwrite mode: {overwrite_existing}")
@@ -141,16 +137,15 @@ def async_process_upload(form_data, file_path, upload_folder, overwrite_existing
 # Technology options: UI label vs backend value
 TECHNOLOGY_OPTIONS = [
     {"label": "Wireless", "value": "Wireless"},
-    {"label": "Routing and Swiching",      "value": "Switches"},  # UI shows RNS, backend still receives "Switches"
+    {"label": "Routing and Switching", "value": "Switches"},  # UI shows RNS, backend still receives "Switches"
     {"label": "Security", "value": "Security"},
     {"label": "Others",   "value": "Others"},
 ]
 
 VALID_TECH_VALUES = {opt["value"] for opt in TECHNOLOGY_OPTIONS}
-TECH_ALIASES = {"Routing and Swiching": "Switches"}  # just in case something posts "RNS" directly
+TECH_ALIASES = {"Routing and Switching": "Switches"}  # just in case something posts "RNS" directly
 
 def normalize_technology(value: str) -> str:
-    """Ensure technology maps to a known backend value."""
     v = (value or "").strip()
     v = TECH_ALIASES.get(v, v)
     return v if v in VALID_TECH_VALUES else "Others"
@@ -181,7 +176,6 @@ def index():
 
 @app.route('/api/check_ticket', methods=['POST'])
 def api_check_ticket():
-    """API endpoint to check if ticket exists (for JavaScript duplicate detection)"""
     try:
         data = request.get_json()
         ticket = data.get('ticket', '').strip()
@@ -211,7 +205,6 @@ def api_check_ticket():
 
 @app.route('/upload', methods=['POST'])
 def upload():
-    """Non-blocking upload route for concurrent file processing"""
     logging.info("Upload route accessed - non-blocking mode")
 
     try:
@@ -282,7 +275,6 @@ def upload():
 
 @app.route('/download/<ticket_number>')
 def download_report(ticket_number):
-    """Download completed report for a ticket"""
     logging.info(f"Download request for ticket: {ticket_number}")
     
     try:
@@ -320,7 +312,6 @@ def download_report(ticket_number):
 
 @app.route('/check_status/<ticket_number>')
 def check_status(ticket_number):
-    """Check processing status for a ticket"""
     logging.info(f"Status check for ticket: {ticket_number}")
     
     try:
@@ -365,7 +356,6 @@ def check_status(ticket_number):
 
 @app.route('/stats')
 def processing_stats():
-    """Show current processing statistics"""
     try:
         stats = {
             'max_workers': executor._max_workers,
@@ -387,7 +377,6 @@ def processing_stats():
 
 @app.route('/debug')
 def debug():
-    """Enhanced debug information with system details"""
     logging.info("Debug route accessed")
     
     try:
@@ -439,13 +428,11 @@ def debug():
 
 @app.route('/reset')
 def reset_form():
-    """Reset form and clear any flash messages"""
     logging.info("Form reset requested")
     return redirect(url_for('index'))
 
 @app.route('/health')
 def health_check():
-    """Health check endpoint for monitoring"""
     try:
         health_status = {
             'status': 'healthy',
@@ -465,7 +452,6 @@ def health_check():
 
 @app.errorhandler(404)
 def not_found_error(error):
-    """Handle 404 errors"""
     logging.warning(f"404 Error: {request.url} not found")
     if request.is_json or request.path.startswith('/api/'):
         return jsonify({'error': 'Endpoint not found'}), 404
@@ -474,7 +460,6 @@ def not_found_error(error):
 
 @app.errorhandler(500)
 def internal_error(error):
-    """Handle 500 errors"""
     logging.error(f"500 Internal Server Error: {str(error)}")
     logging.exception("Full traceback for 500 error:")
     if request.is_json or request.path.startswith('/api/'):
@@ -484,7 +469,6 @@ def internal_error(error):
 
 @app.errorhandler(413)
 def request_entity_too_large(error):
-    """Handle file too large errors"""
     logging.warning(f"File too large error: {str(error)}")
     if request.is_json or request.path.startswith('/api/'):
         return jsonify({'error': 'File too large'}), 413
@@ -493,7 +477,6 @@ def request_entity_too_large(error):
 
 # Cleanup thread pool on app shutdown
 def cleanup_executor():
-    """Cleanup thread pool on shutdown"""
     logging.info("Shutting down thread pool executor...")
     executor.shutdown(wait=True)
     logging.info("Thread pool executor shut down complete")
@@ -527,15 +510,15 @@ if __name__ == '__main__':
 
         # Startup information
         logging.info("Starting Flask development server...")
-        print(f"\n🚀 Flask Upload System Starting...")
-        print(f"📍 Server: http://{local_ip}:5000")
-        print(f"🔍 Debug: http://{local_ip}:5000/debug")
-        print(f"📊 Stats: http://{local_ip}:5000/stats")
-        print(f"❤️  Health: http://{local_ip}:5000/health")
-        print(f"📥 Downloads: http://{local_ip}:5000/download/<ticket_number>")
-        print(f"📋 Status: http://{local_ip}:5000/check_status/<ticket_number>")
-        print(f"⚡ Concurrent processing: {executor._max_workers} workers")
-        print(f"🎯 Non-blocking uploads: ENABLED")
+        print(f"\nFlask Upload System Starting...")
+        print(f"-> Server: http://{local_ip}:5000")
+        print(f"-> Debug: http://{local_ip}:5000/debug")
+        print(f"-> Stats: http://{local_ip}:5000/stats")
+        print(f"-> Health: http://{local_ip}:5000/health")
+        print(f"-> Downloads: http://{local_ip}:5000/download/<ticket_number>")
+        print(f"-> Status: http://{local_ip}:5000/check_status/<ticket_number>")
+        print(f"-> Concurrent processing: {executor._max_workers} workers")
+        print(f"-> Non-blocking uploads: ENABLED")
         print("=" * 60)
         
         logging.info(f"Flask server starting on {local_ip}:5000")
@@ -548,14 +531,14 @@ if __name__ == '__main__':
         
     except KeyboardInterrupt:
         logging.info("Flask application stopped by user (Ctrl+C)")
-        print("\n🛑 Shutting down Flask application...")
+        print("\n-> Shutting down Flask application...")
         cleanup_executor()
         
     except Exception as e:
         error_msg = f"Failed to start Flask app: {str(e)}"
         logging.critical(error_msg)
         logging.exception("Full traceback for Flask startup error:")
-        print(f"❌ {error_msg}")
+        print(f"{error_msg}")
         raise
         
     finally:

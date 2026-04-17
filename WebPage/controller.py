@@ -9,6 +9,9 @@ import shutil
 import zipfile
 from typing import Dict, Any
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import partial
+
 
 # current file’s directory (Webpage/)
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -24,43 +27,14 @@ logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+    
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))    
 
-from pathlib import Path
-
-REPO_ROOT = Path(__file__).resolve().parents[1]  # .../Cisco_Automations
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-try:
-    # import strictly as packages
-    from PM_Report import pipeline, Data_to_Excel
-    from EOX import Cisco_EOX
-    logging.info("All modules imported successfully")
-except ImportError as e:
-    logging.error(f"Module import failed: {e}")
-
-    # fallback mock to keep flows usable
-    class MockModule:
-        @staticmethod
-        def eox_tes():
-            logging.warning("Mock EOX test - real module not available")
-            return "Mock test completed"
-
-        @staticmethod
-        def request_EOX_data_from_online(excel_file_path, technology):
-            logging.warning("Mock EOX processing - real module not available")
-            return True
-
-        @staticmethod
-        def sub_controller(data, unique_pid, technology):
-            logging.warning("Mock sub_controller - real module not available")
-            return data
-
-    if 'Cisco_EOX' not in globals():
-        Cisco_EOX = MockModule()
+from EOX import API_Pipeline
+from PM_Report import pipeline, Data_to_Excel
+from WebPage import postprocess_controller
 
 def backup_old_zip_file(ticket_folder: Path, ticket: str) -> bool:
-    """Create backup of existing zip file before overwriting"""
     try:
         old_zip_path = ticket_folder / f"{ticket}.zip"
         if old_zip_path.exists():
@@ -77,7 +51,6 @@ def backup_old_zip_file(ticket_folder: Path, ticket: str) -> bool:
         return False
 
 def safe_remove_directory(directory_path: Path) -> bool:
-    """Safely remove directory - generic Unix/Linux approach"""
     try:
         if not directory_path.exists():
             logging.debug(f"Directory doesn't exist: {directory_path}")
@@ -96,7 +69,6 @@ def safe_remove_directory(directory_path: Path) -> bool:
         return False
 
 def clear_extraction_directory(ticket_folder: Path, ticket: str) -> bool:
-    """Clear existing extraction directory"""
     try:
         extract_folder_name = f"{ticket}_extracted"
         extract_path = ticket_folder / extract_folder_name
@@ -124,7 +96,6 @@ def clear_extraction_directory(ticket_folder: Path, ticket: str) -> bool:
         return False
 
 def backup_existing_excel(excel_path: Path) -> bool:
-    """Create backup of existing Excel file"""
     try:
         if excel_path.exists():
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -139,7 +110,6 @@ def backup_existing_excel(excel_path: Path) -> bool:
         return False
 
 def get_extraction_path(zip_file_path: str, ticket: str) -> str:
-    """Get extraction path, creating unique one if needed"""
     zip_directory = os.path.dirname(zip_file_path)
     base_extract_name = f"{ticket}_extracted"
     extract_path = os.path.join(zip_directory, base_extract_name)
@@ -154,7 +124,6 @@ def get_extraction_path(zip_file_path: str, ticket: str) -> str:
     return extract_path
 
 def extract_zip_flatten_structure(zip_file_path: str, ticket: str = None):
-    """Extract zip file with flattened structure"""
     try:
         if not os.path.exists(zip_file_path):
             return {
@@ -238,25 +207,23 @@ def extract_zip_flatten_structure(zip_file_path: str, ticket: str = None):
         return {'success': False, 'error': f'Extraction error: {str(e)}'}
 
 def check_module_availability():
-    """Check which modules + required functions are available"""
     pipeline_ok = 'pipeline' in globals() and hasattr(pipeline, 'extract')
     d2x_ok = 'Data_to_Excel' in globals() and all(
         hasattr(Data_to_Excel, fn)
         for fn in ('append_to_excel', 'process_and_style_excel', 'unique_model_numbers_and_serials')
     )
-    eox_ok = 'Cisco_EOX' in globals() and all(
-        hasattr(Cisco_EOX, fn)
+    api_pipeline = 'API_Pipeline' in globals() and all(
+        hasattr(API_Pipeline, fn)
         for fn in ('eox_tes', 'request_EOX_data_from_online', 'sub_controller')
     )
     return {
         'pipeline': pipeline_ok,
         'Data_to_Excel': d2x_ok,
-        'Cisco_EOX': eox_ok,
+        'API_Pipeline': api_pipeline,
         'extract_zip_flatten_structure': True
     }
 
 def cleanup_old_extractions(ticket_folder: Path, ticket: str, keep_count: int = 5):
-    """Clean up old extraction directories to prevent disk space issues"""
     try:
         extraction_pattern = f"{ticket}_extracted"
         old_extractions = []
@@ -279,74 +246,44 @@ def cleanup_old_extractions(ticket_folder: Path, ticket: str, keep_count: int = 
     except Exception as e:
         logging.warning(f"Failed to cleanup old extractions: {e}")
 
-def process_upload(request_data: Dict[str, Any], file_obj, upload_folder: str, overwrite_existing: bool = False) -> bool:
-    logging.info(f"Starting upload processing (overwrite: {overwrite_existing})")
-    
+# Helper functions for concurrent operations
+def setup_folders_sync(upload_folder, ticket, overwrite_existing):
     try:
-        ticket = request_data.get('ticket', '').strip()
-        comment = request_data.get('comment', '')
-        technology = request_data.get('technology', '')
-        
-        modules = check_module_availability()
-        
-        if not modules['extract_zip_flatten_structure']:
-            logging.critical('File processing module unavailable')
-            return False
-        
-        # Create folder paths
         ticket_folder = Path(upload_folder) / ticket
         ticket_folder.mkdir(parents=True, exist_ok=True)
-        
         file_path = ticket_folder / f"{ticket}.zip"
         excel_path = ticket_folder / f"{ticket}_analysis.xlsx"
         
-        # Check existing state
-        excel_already_exists = excel_path.exists()
-        zip_already_exists = file_path.exists()
-        
-        logging.info(f"Existing state - Excel: {excel_already_exists}, Zip: {zip_already_exists}")
-        
-        # Handle existing files based on overwrite mode
-        if overwrite_existing:
-            # Backup old zip file if it exists
-            if zip_already_exists:
-                backup_success = backup_old_zip_file(ticket_folder, ticket)
-                if not backup_success:
-                    logging.warning("Failed to backup old zip file, continuing anyway")
-            
-            # Backup existing Excel file if it exists
-            if excel_already_exists:
-                backup_success = backup_existing_excel(excel_path)
-                if not backup_success:
-                    logging.warning("Failed to backup existing Excel file, continuing anyway")
-            
-            # Clear extraction directory
-            clear_success = clear_extraction_directory(ticket_folder, ticket)
-            if not clear_success:
-                logging.warning("Failed to clear extraction directory, will use alternative")
-            
-            logging.info("Prepared for overwrite - created backups and cleared directories")
-        
-        # Save the new uploaded file
-        try:
-            file_obj.save(str(file_path))
-            logging.info(f"Saved new zip file: {file_path}")
-        except Exception as save_error:
-            logging.error(f"Failed to save zip file: {save_error}")
-            return False
-        
-        # Save metadata
+        logging.debug(f"Folder setup completed: {ticket_folder}")
+        return ticket_folder, file_path, excel_path
+    except Exception as e:
+        logging.error(f"Folder setup failed: {e}")
+        return None, None, None
+
+def save_file_sync(file_obj, file_path):
+    try:
+        file_obj.save(str(file_path))
+        logging.info(f"Saved file: {file_path}")
+        return True
+    except Exception as e:
+        logging.error(f"Failed to save file: {e}")
+        return False
+
+def save_metadata_sync(ticket_folder, request_data, modules):
+    try:
         metadata_path = ticket_folder / 'metadata.json'
+        
+        # Get file info if available
+        file_path = ticket_folder / f"{request_data.get('ticket', '')}.zip"
+        
         upload_info = {
-            'ticket': ticket,
-            'comment': comment,
-            'technology': technology,
+            'ticket': request_data.get('ticket', ''),
+            'comment': request_data.get('comment', ''),
+            'technology': request_data.get('technology', ''),
             'file_path': str(file_path),
-            'filename': file_obj.filename,
+            'filename': f"{request_data.get('ticket', '')}.zip",
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
-            'overwrite_mode': overwrite_existing,
-            'excel_existed': excel_already_exists,
-            'zip_existed': zip_already_exists,
+            'overwrite_mode': request_data.get('overwrite_existing', False),
             'modules': modules,
             'system_info': {
                 'platform': os.name,
@@ -354,117 +291,208 @@ def process_upload(request_data: Dict[str, Any], file_obj, upload_folder: str, o
             }
         }
         
-        try:
-            with open(metadata_path, 'w', encoding='utf-8') as f:
-                json.dump(upload_info, f, indent=4, ensure_ascii=False)
-        except Exception as metadata_error:
-            logging.warning(f"Failed to save metadata: {metadata_error}")
-        
-        # Extract ZIP file - pass ticket for better path management
-        extraction_result = extract_zip_flatten_structure(str(file_path), ticket)
-        if not extraction_result or not extraction_result.get('success', False):
-            logging.error(f"ZIP extraction failed: {extraction_result.get('error', 'Unknown error')}")
-            return False
-        
-        logging.info(f"Successfully extracted {extraction_result['file_count']} files")
-        
-        # Clean up old extraction directories to prevent disk space issues
-        cleanup_old_extractions(ticket_folder, ticket)
-        
-        # Process with pipeline
-        if not modules['pipeline']:
-            logging.error("pipeline module unavailable")
-            return False
+        with open(metadata_path, 'w', encoding='utf-8') as f:
+            json.dump(upload_info, f, indent=4, ensure_ascii=False)
+        return True
+    except Exception as e:
+        logging.warning(f"Failed to save metadata: {e}")
+        return True  # Non-critical
 
-        try:
+def process_upload(request_data: Dict[str, Any], file_obj, upload_folder: str, overwrite_existing: bool = False) -> bool:
+    logging.info(f"Starting optimized upload processing (overwrite: {overwrite_existing})")
+    
+    # Quick function availability check
+    if not hasattr(API_Pipeline, 'eox_milestones'):
+        logging.critical("eox_milestones function not found in API_Pipeline!")
+        return False
+    
+    try:
+        # Phase 1: Basic setup (unchanged)
+        ticket = request_data.get('ticket', '').strip()
+        comment = request_data.get('comment', '')
+        technology = request_data.get('technology', '')
+        
+        # Phase 2: Concurrent I/O operations using ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            # Submit concurrent tasks
+            futures = []
+            
+            # Module check
+            futures.append(executor.submit(check_module_availability))
+            
+            # Folder setup
+            futures.append(executor.submit(setup_folders_sync, upload_folder, ticket, overwrite_existing))
+            
+            # Wait for completion
+            modules = futures[0].result()
+            folder_info = futures[1].result()
+            
+            if not modules['extract_zip_flatten_structure']:
+                logging.critical('File processing module unavailable')
+                return False
+            
+            # Validate folder setup
+            if folder_info[0] is None:
+                logging.error("Folder setup failed")
+                return False
+                
+            ticket_folder, file_path, excel_path = folder_info
+            
+            # Phase 3: File operations (concurrent)
+            file_futures = []
+            file_futures.append(executor.submit(save_file_sync, file_obj, file_path))
+            file_futures.append(executor.submit(save_metadata_sync, ticket_folder, request_data, modules))
+            
+            # Handle overwrite operations
+            if overwrite_existing:
+                file_futures.append(executor.submit(backup_old_zip_file, ticket_folder, ticket))
+                file_futures.append(executor.submit(backup_existing_excel, excel_path))
+                file_futures.append(executor.submit(clear_extraction_directory, ticket_folder, ticket))
+            
+            # Wait for file operations
+            for future in as_completed(file_futures):
+                result = future.result()
+                if result is False:  # If any critical operation failed
+                    logging.error("Critical file operation failed")
+                    return False
+            
+            # Phase 4: CPU-intensive operations
+            extraction_result = extract_zip_flatten_structure(str(file_path), ticket)
+            if not extraction_result or not extraction_result.get('success', False):
+                logging.error("ZIP extraction failed")
+                return False
+            
+            # Phase 5: Data processing pipeline
             data = pipeline.extract(extraction_result['extract_path'])
-            logging.info("pipeline processing completed successfully")
-        except Exception as e:
-            logging.error(f"pipeline processing failed: {e}")
-            return False
-        
-        # Excel processing
-        if not modules['Data_to_Excel']:
-            logging.warning("Data_to_Excel module unavailable")
-            return True
-        
-        try:
-            # Get unique PIDs for EOX processing
+            
+            # Phase 6: Concurrent API and Excel processing
+            processing_futures = []
+            
+            # Get unique PIDs
             unique_values = Data_to_Excel.unique_model_numbers_and_serials(data)
-            unique_pid = []
-            for values in unique_values:
-                unique_pid.append(values[0])
             
-            # Process with EOX sub_controller
-            fresh_data = Cisco_EOX.sub_controller(data, unique_pid, technology)
-            logging.info("EOX sub_controller processing completed")
-        except Exception as e:
-            logging.error(f"EOX sub_controller failed: {e}")
-            fresh_data = data  # Use original data if EOX fails
-        
-        try:
-            # Remove existing Excel file if overwriting
-            if excel_already_exists and overwrite_existing and excel_path.exists():
-                excel_path.unlink()
-                logging.info(f"Removed existing Excel file for overwrite: {excel_path}")
+            # Submit EOX processing
+            processing_futures.append(
+                executor.submit(API_Pipeline.eox_milestones, data, unique_values, technology)
+            )
             
-            # Create new Excel file
-            Data_to_Excel.append_to_excel(ticket, fresh_data, str(excel_path))
+            # Submit cleanup task (non-blocking)
+            processing_futures.append(
+                executor.submit(cleanup_old_extractions, ticket_folder, ticket)
+            )
             
-            if not excel_path.exists():
-                logging.error("Excel file not created")
+            # Get EOX data with proper error handling
+            try:
+                eox_data = processing_futures[0].result(timeout=300)  # 5 minute timeout
+                logging.info("EOX processing completed")
+            except Exception as e:
+                logging.error(f"EOX processing failed: {e}")
+                eox_data = None
+            
+            # Let cleanup finish in background
+            try:
+                processing_futures[1].result(timeout=10)  # Give cleanup 10 seconds
+            except Exception:
+                logging.warning("Cleanup still running in background")
+            
+            # Process final data
+            if not eox_data:
+                logging.error("EOX data missing or failed!")
+                return False
+                
+            try:
+                final_data = postprocess_controller.sub_controller(data, eox_data)
+                if not final_data:
+                    logging.error("Post-processing returned empty data!")
+                    return False
+            except Exception as e:
+                logging.error(f"Post-processing failed: {e}")
+                return False
+            
+            # Create Excel file
+            try:
+                Data_to_Excel.append_to_excel(ticket, final_data, file_path=excel_path)
+                logging.info("Excel file created successfully")
+                return True
+            except Exception as e:
+                logging.error(f"Excel creation failed: {e}")
                 return False
         
-            # Apply styling
-            Data_to_Excel.process_and_style_excel(str(excel_path))
-            logging.info(f"Successfully created Excel file: {excel_path}")
-               
-        except Exception as e:
-            logging.error(f"Excel creation failed: {e}")
-            return False
-        
-        # Handle EOX processing with conditional copying
-        try:
-            if excel_already_exists and overwrite_existing:
-                # Create copy for EOX processing when overwriting
-                copy_path = excel_path.parent / f"copy_{excel_path.name}"
-                shutil.copy2(str(excel_path), str(copy_path))
-                logging.info(f"Created copy for EOX processing: {copy_path}")
-                
-                # EOX processing on copy
-                if modules['Cisco_EOX']:
-                    try:
-                        Cisco_EOX.request_EOX_data_from_online(excel_file_path=str(copy_path), technology=technology)
-                        logging.info(f"EOX processing completed on copy: {copy_path}")
-                    except Exception as e:
-                        logging.error(f"EOX processing failed on copy: {e}")
-            else:
-                # First time processing - direct EOX processing
-                logging.info("First time processing - performing direct EOX processing")
-                
-                if modules['Cisco_EOX']:
-                    try:
-                        # Create temporary copy for EOX to avoid modifying main file
-                        temp_copy_path = excel_path.parent / f"temp_eox_{excel_path.name}"
-                        shutil.copy2(str(excel_path), str(temp_copy_path))
-                        
-                        Cisco_EOX.request_EOX_data_from_online(excel_file_path=str(temp_copy_path), technology=technology)
-                        logging.info(f"EOX processing completed on temporary copy: {temp_copy_path}")
-                        
-                        # Clean up temporary copy
-                        if temp_copy_path.exists():
-                            temp_copy_path.unlink()
-                            logging.info("Removed temporary EOX copy")
-                            
-                    except Exception as e:
-                        logging.error(f"EOX processing failed: {e}")
-                        
-        except Exception as e:
-            logging.error(f"EOX processing workflow failed: {e}")
-        
-        logging.info(f"Upload processing completed successfully for ticket: {ticket}")
-        return True
+        return False
         
     except Exception as e:
-        logging.exception(f'Upload processing error: {str(e)}')
+        logging.exception(f'Optimized upload processing error: {str(e)}')
         return False
+
+def main():
+    data = []
+    # data = pipeline.extract(r"C:\Users\girish.n\Downloads\OneDrive_2025-11-18 1\Cisco R&S")
+    file = r"C:\Users\girish.n\Downloads\PM logs sets\Ultimate_logs\C9200_Switches\SMEDC-ITMT-SW01.txt"
+    with open(file, "r", errors="ignore") as f:
+        text = f.read()
+
+    # 1) check if 'show version' exists at all
+    print("Contains 'show version'?:", "show version" in text.lower())
+
+    # 2) find index of first occurrence
+    idx = text.lower().find("show version")
+    print("Index of 'show version':", idx)
+
+    if idx != -1:
+        print("\n--- Context around 'show version' (±200 chars) ---")
+        print(text[idx-200 : idx+200])
+
+    # 3) now test your scoper correctly
+    ver = pipeline._scope_show_version(text)
+    print("\nScoped show version length:", len(ver))
+    print("\n--- First 300 chars of scoped block ---")
+    print(ver[:300])
+    # target_filename = 'TH-MUDA-WHC9407R-01.txt'
+    # selected_data = None
+
+    # for item in data:
+    #     # Check if the 'File name' key exists and the first element matches
+    #     if item.get('File name') and item['File name'][0] == target_filename:
+    #         selected_data = item
+    #         break  # Exit the loop immediately after finding the match
+
+    # # selected_data now holds the matching dictionary or None
+    # print(selected_data)
+    # Data_to_Excel.append_to_excel("SVR3", data, file_path = r"C:\Users\girish.n\OneDrive - NTT\Desktop\Github Projects\Workspace_repo\Network_Automation_PM_Report\WebPage\SVR3_analysis.xlsx")
+# if __name__ == "__main__":
+#     main()
+
+
+def test_case():
+    from PM_Report import pipeline
+    from PM_Report.Switching.ios_xe import Cisco_IOS_XE as IOSXE
+    from PM_Report.Switching.ios import Cisco_IOS as IOS
+    import traceback
+    import re
+
+    file = r"C:\Users\girish.n\Downloads\PM logs sets\Ultimate_logs\C8300_Switches\172.18.9.99_details.txt"
+
+    # print("pipeline file:", pipeline.__file__)
+    with open(file, "r", errors="ignore") as f:
+        text = f.read()
+    print("detect_os says:", pipeline.detect_os(open(file, "r", errors="ignore").read()))
+
+    try:
+        # out = IOSXE.process_file(file)
+        # print("process_file returned type:", type(out))
+        # print("process_file returned:", out)
+
+        data = pipeline._process_one(file)
+        print("Data extracted:", data)
+
+        # if isinstance(out, dict):
+        #     print("process_file ok. Host name:", out.get("Host name"))
+        #     print("Remark:", out.get("Remark"))
+        # else:
+        #     print("process_file returned NON-dict (likely missing return in ios_xe.py)")
+    except Exception as e:
+        print("process_file exception:", repr(e))
+        print(traceback.format_exc())
+
+if __name__ == "__main__":
+    test_case()

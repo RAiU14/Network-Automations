@@ -21,37 +21,8 @@ import re
 # 1. line_matching - which covers, host Name, IP address, uptime, version, cpu utilization, fan status
 # 2. 
 
-'''
-def escape_parentheses(input_string):
-    """
-    Escapes parentheses in a given string by adding backslashes before them.
-    This allows the resulting string to be used as a regular expression pattern.
-
-    Args:
-        input_string (str): The input string containing parentheses.
-
-    Returns:
-        str: The modified string with backslashes added before parentheses.
-    """
-    # Use a regular expression to replace unescaped parentheses with their escaped versions
-    pattern = r'([\(\)])'
-    escaped_string = re.sub(pattern, r'\\\1', input_string)
-    return escaped_string
-
-    Example:
-    Original string: Current CPU(s) load
-    Escaped string: Current CPU\(s\) load
-'''
-
 # common/reused function for single line values
 def line_matching(path, simple_value):
-    """ 
-        Args:
-        path (location/directory): The path of text file located.
-
-        Returns:
-        str: The expected line.
-    """
     try:
         with open(path) as file:
             text_content = file.read()
@@ -319,31 +290,3 @@ def WLC(path):
 
     print(temperature(path))
  
-if __name__ == '__main__':
-    path = "Log_samples\AIR-CT5508-K9_1.txt"
-
-    # Problems : model & serial number, memory , power
-    # no issue with memory for 3500
-    # complete problem with CBJ01WLC01 (1).txt - 5500
-
-    # print(f'Model Number : ', model_serial_number(path)[0],'\n'
-    #       f'Serial Number : ', model_serial_number(path)[1])
-
-    # print(f'Power supply 1 : ', power_supply(path)[0],'\n'
-    #       f'Power supply 2 : ', power_supply(path)[1])
-    
-    # print(f'Total memory : ', memory(path)[0],'\n'
-    #       f'Used memory : ', memory(path)[1],'\n'
-    #       f'Free memory : ', memory(path)[2],'\n'
-    #       f'Used memory Percentage : ', memory(path)[3])
-
-    # print("Reload/Reboot reason : ", reboot_reason(path))
-
-    # simple_values = ["System Name", "IP Address", "System Up Time", 
-    #                  "Product Version", "Current CPU", 
-    #                  "Fan Status"]
-    # for item in simple_values:
-    #     print(f'{item} : ', line_matching(path, item))
-
-    # print(temperature(path))
-    WLC(path)

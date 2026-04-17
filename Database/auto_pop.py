@@ -1,8 +1,17 @@
 import os
-import datetime
-import logging
 import sys
 import json
+import logging
+import datetime
+
+# current file’s directory (Webpage/)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# project root (Cisco_Automations/)
+root_dir = os.path.dirname(current_dir)
+    
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))    
+
+from EOX import Cisco_Scrapping
 
 # Setup logging
 current_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
@@ -19,7 +28,6 @@ logging.basicConfig(
 parent_dir = os.path.dirname(current_dir)
 sys.path.insert(0, parent_dir)
 
-from EOX.Cisco_EOX import *
 
 # Global storage variables
 all_available_devices = {}
@@ -29,23 +37,21 @@ eox_data = {}
 categories = {}
 
 def initialize_categories():
-    """Initialize categories from Cisco EOX module"""
     global categories
     try:
-        categories = category()
+        categories = Cisco_Scrapping.category()
         logging.info("Categories initialized successfully")
     except Exception as e:
         logging.error(f"Failed to initialize categories: {str(e)}")
         raise
 
 def load_categories():
-    """Load all available devices from categories"""
     global all_available_devices, categories
     try:
         logging.info("Loading categories...")
         for link in categories.keys():
             try:
-                all_available_devices[link] = open_cat(categories[link])
+                all_available_devices[link] = Cisco_Scrapping.open_cat(categories[link])
                 logging.debug(f"Loaded category: {link}")
             except Exception as e:
                 logging.error(f"Failed to load category {link}: {str(e)}")
@@ -58,7 +64,6 @@ def load_categories():
         raise
 
 def process_devices():
-    """Process devices and separate regular devices from EOX devices"""
     global all_available_devices, all_devices, eox_devices
     try:
         logging.info("Processing devices...")
@@ -96,7 +101,6 @@ def process_devices():
         raise
 
 def scrape_eox_data():
-    """Scrape EOX data from Cisco website"""
     global eox_devices, eox_data
     try:
         total_devices = len(eox_devices)
@@ -113,13 +117,13 @@ def scrape_eox_data():
             try:
                 logging.debug(f"Processing EOX for device: {device_name}")
                 
-                url = link_check(eox_devices[device_name])
+                url = Cisco_Scrapping.link_check(eox_devices[device_name])
                 if not url:
                     logging.debug(f"No valid URL found for device: {device_name}")
                     processed_count += 1
                     continue
                 
-                eox_links = eox_check(url)
+                eox_links = Cisco_Scrapping.eox_check(url)
                 if eox_links:
                     if not eox_links[0]:
                         eox_data[device_name] = eox_links[1]
@@ -127,11 +131,11 @@ def scrape_eox_data():
                         logging.debug(f"Direct EOX data retrieved for: {device_name}")
                     else:
                         try:
-                            urls = eox_details(eox_links[1]['url'])
+                            urls = Cisco_Scrapping.eox_details(eox_links[1]['url'])
                             if urls:
                                 for link_key in urls:
                                     try:
-                                        eox_result = eox_scrapping(urls[link_key])
+                                        eox_result = Cisco_Scrapping.eox_scrapping(urls[link_key])
                                         if eox_result: 
                                             for dev in eox_result[1]:
                                                 eox_data[dev] = eox_result[0]
@@ -163,7 +167,6 @@ def scrape_eox_data():
         raise
 
 def generate_filename(base_filename):
-    """Generate filename with current date appended"""
     try:
         current_date = datetime.datetime.now().strftime('%Y-%m-%d')
         
@@ -181,7 +184,6 @@ def generate_filename(base_filename):
         return base_filename
 
 def save_eox_data(base_filename='new_eox_pid.json'):
-    """Save EOX data to JSON file in the 'JSON Files' directory"""
     global eox_data
     try:
         # Get the directory where the script is located
@@ -222,15 +224,6 @@ def save_eox_data(base_filename='new_eox_pid.json'):
         raise
 
 def main(base_filename='new_eox_pid.json'):
-    """
-    Main function to execute the complete EOX data retrieval process
-    
-    Args:
-        base_filename (str): Base filename for output (date will be appended)
-    
-    Returns:
-        dict: Results of the operation
-    """
     start_time = datetime.datetime.now()
     logging.info("Starting EOX Device List Retrieval Process")
     

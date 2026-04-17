@@ -11,17 +11,9 @@ from tempfile import NamedTemporaryFile
 from openpyxl.utils import get_column_letter
 from .Switching.ios_xe import Cisco_IOS_XE
 
-
-# ----- version banner so you can confirm the right module is loaded -----
-PHASE2_VERSION = "Phase2-final-2025-08-17.hotfix1"
-try:
-    logging.info(f"[Data_to_Excel] Loaded module version: {PHASE2_VERSION}")
-except Exception:
-    pass
-# -----------------------------------------------------------------------
-
 MAIN_SHEET = "Preventive Maintanance"  # exact spelling as requested
 SUMMARY_SHEET = "Summary"
+MODULE_SHEET = "Module Details"
 
 def _unwrap_value(val):
     while isinstance(val, list) and len(val) == 1:
@@ -29,9 +21,6 @@ def _unwrap_value(val):
     return val
 
 def _safe_save_wb(wb, path):
-    """
-    Atomic save to avoid partial/corrupt archives.
-    """
     parent = os.path.dirname(path)
     os.makedirs(parent, exist_ok=True) if parent else None
     with NamedTemporaryFile(delete=False, dir=parent or None, suffix=".xlsx") as tmp:
@@ -57,7 +46,7 @@ def append_to_excel(ticket_number, data_list, file_path=None, column_order=None)
             'CPU Utilization', 'Total memory', 'Used memory', 'Free memory', 'Memory Utilization (%)',
             'Total flash memory', 'Used flash memory', 'Free flash memory', 'Used Flash (%)',
             'Fan status', 'Temperature status', 'PowerSupply status', 'Available Free Ports',
-            'End-of-Sale Date: HW', 'Last Date of Support: HW', 'End of Routine Failure Analysis Date:  HW',
+            'End-of-Sale Date: HW', 'Last Date of Support: HW', 'End of Routine Failure Analysis Date: HW',
             'End of Vulnerability/Security Support: HW', 'End of SW Maintenance Releases Date: HW',
             'Any Half Duplex', 'Interface/Module Remark', 'Config Status', 'Config Save Date',
             'Critical logs', 'Remark'
@@ -103,7 +92,7 @@ def append_to_excel(ticket_number, data_list, file_path=None, column_order=None)
     df = pd.DataFrame(formatted_data)
     df = df[column_order]
 
-    # Ensure parent folder exists
+    # Ensure parent folder exists (unchanged)
     try:
         parent = os.path.dirname(file_path)
         if parent and not os.path.exists(parent):
@@ -111,39 +100,31 @@ def append_to_excel(ticket_number, data_list, file_path=None, column_order=None)
     except Exception as e:
         logging.warning(f"Could not ensure parent folder for Excel: {e}")
 
-    # Write/append Excel (always ensure main sheet name is correct)
     try:
         if os.path.exists(file_path):
-            logging.info(f"Appending to existing Excel file: {file_path}")
-            # Read current main sheet only, append, then rewrite main sheet (Summary is recreated later)
+            logging.info(f"Reading existing Excel file once: {file_path}")
             try:
                 existing_df = pd.read_excel(file_path, sheet_name=MAIN_SHEET)
             except Exception:
-                # Fallback to first sheet if main missing/corrupt
                 existing_df = pd.read_excel(file_path)
             combined_df = pd.concat([existing_df, df], ignore_index=True)
-            with pd.ExcelWriter(file_path, engine="openpyxl", mode="w") as writer:
-                combined_df.to_excel(writer, index=False, sheet_name=MAIN_SHEET)
         else:
-            logging.info(f"Creating new Excel file: {file_path}")
-            with pd.ExcelWriter(file_path, engine="openpyxl", mode="w") as writer:
-                df.to_excel(writer, index=False, sheet_name=MAIN_SHEET)
+            combined_df = df
 
-        logging.debug(f"Successfully wrote {len(df)} rows to Excel file and saved in {file_path}")
+        logging.info(f"Writing final Excel (single open) to: {file_path}")
+        with pd.ExcelWriter(file_path, engine="openpyxl", mode="w") as writer:
+            combined_df.to_excel(writer, index=False, sheet_name=MAIN_SHEET)
+
+            wb = writer.book
+
+            try:
+                process_and_style_excel(wb=wb, main_sheet=MAIN_SHEET)  # in-memory, no save
+            except Exception as e:
+                logging.warning(f"Excel styling step failed inside append_to_excel: {e}")
+        logging.debug(f"Successfully wrote {len(df)} new rows; saved to {file_path}")
     except Exception as e:
         logging.error(f"Error writing to Excel for case {ticket_number}: {str(e)}")
         return None
-
-    # Style + remarks + summary
-    try:
-        process_and_style_excel(file_path)
-    except Exception as e:
-        logging.warning(f"Excel styling step failed inside append_to_excel: {e}")
-
-    try:
-        add_summary_sheet(file_path)  # Ensures 1) Preventive Maintanance, 2) Summary
-    except Exception as e:
-        logging.warning(f"Summary sheet step failed inside append_to_excel: {e}")
 
     return file_path
 
@@ -157,7 +138,7 @@ def export_json(ticket_number, data_list, file_path=None, column_order=None, coe
             'CPU Utilization', 'Total memory', 'Used memory', 'Free memory', 'Memory Utilization (%)',
             'Total flash memory', 'Used flash memory', 'Free flash memory', 'Used Flash (%)',
             'Fan status', 'Temperature status', 'PowerSupply status', 'Available Free Ports',
-            'End-of-Sale Date: HW', 'Last Date of Support: HW', 'End of Routine Failure Analysis Date:  HW',
+            'End-of-Sale Date: HW', 'Last Date of Support: HW', 'End of Routine Failure Analysis Date: HW',
             'End of Vulnerability/Security Support: HW', 'End of SW Maintenance Releases Date: HW',
             'Any Half Duplex', 'Interface/Module Remark', 'Config Status', 'Config Save Date',
             'Critical logs', 'Remark'
@@ -241,25 +222,53 @@ def unique_model_numbers_and_serials(data_list):
                     model_serials.setdefault(model_value, serial_value)
         return [[model, serial] for model, serial in model_serials.items()]
     except Exception as e:
-        print(f"Error extracting model numbers and serials: {str(e)}")
+        logging.error(f"Error extracting model numbers and serials: {str(e)}")
         return []
+ 
+# Function to edit the complete data passed by process_directory and convert it to format required by software_API for input.    
+def software_input_editor(data_list):
+    device_pass = {}
+    for i, device in enumerate(data_list):
+        try:
+            model = device.get("Model number")
+            version = device.get("Current s/w version")
+            if not model or not version:
+                logging.error("row %d: missing model/version", i)
+                continue  # skip incomplete rows
 
-def process_and_style_excel(file_path):
-    """
-    - Ensure main sheet exists/named correctly.
-    - Update 'Remark' IN-PLACE (no sheet delete).
-    - Style headers/cells and format percentage/date columns.
-    - Save atomically.
-    """
-    # Load workbook
-    wb = openpyxl.load_workbook(file_path)
+            # Support both scalars and lists without changing your core logic
+            model_list  = model   if isinstance(model,  (list, tuple)) else [model]
+            version_list = version if isinstance(version, (list, tuple)) else [version] * len(model_list)
+            if len(model_list) != len(version_list):
+                logging.warning("row %d: %d models vs %d versions; truncating", i, len(model_list), len(version_list))
+
+            for m, v in zip(model_list, version_list):
+                if not m or not v:
+                    continue
+                m = str(m).strip(); v = str(v).strip()
+                versions = device_pass.setdefault(m, [])
+                if v not in versions:
+                    versions.append(v)
+
+        except Exception as e:
+            logging.error("row %d: error processing device: %s", i, e)
+
+    return device_pass
+
+# ====== UPDATED: accepts wb (in-memory) OR file_path (legacy) ======
+def process_and_style_excel(file_path=None, wb=None, main_sheet=MAIN_SHEET):
+    in_place_save = False
+    if wb is None:
+        wb = openpyxl.load_workbook(file_path)
+        in_place_save = True
+
     # Ensure main sheet name
-    if MAIN_SHEET in wb.sheetnames:
-        ws = wb[MAIN_SHEET]
+    if main_sheet in wb.sheetnames:
+        ws = wb[main_sheet]
     else:
         # rename first sheet if needed
         first = wb[wb.sheetnames[0]]
-        first.title = MAIN_SHEET
+        first.title = main_sheet
         ws = first
 
     # Map headers
@@ -294,7 +303,6 @@ def process_and_style_excel(file_path):
 
     # Checks ported from prior logic but now work on row values
     def build_row_accessor(r):
-        """Return a function like iloc(idx) using current headers order."""
         def _iloc(i):
             if i < 0 or i >= len(headers):
                 return ""
@@ -372,7 +380,7 @@ def process_and_style_excel(file_path):
             one_year_later = today + timedelta(days=365)
             has_passed = is_approaching = False
             for name in ["End-of-Sale Date: HW", "Last Date of Support: HW",
-                         "End of Routine Failure Analysis Date:  HW",
+                         "End of Routine Failure Analysis Date: HW",
                          "End of Vulnerability/Security Support: HW",
                          "End of SW Maintenance Releases Date: HW"]:
                 i = col(name)
@@ -451,40 +459,56 @@ def process_and_style_excel(file_path):
 
     # Styling & formatting on all sheets
     red_fill = PatternFill(start_color="bc4f5e", end_color="bc4f5e", fill_type="solid")
+    yellow_fill = PatternFill(start_color="FFBF00", end_color="FFBF00", fill_type="solid")
     purple_fill = PatternFill(start_color="CBC3E3", end_color="CBC3E3", fill_type="solid")
     center_wrap_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
     bold_font = Font(bold=True)
     percentage_columns = ["CPU Utilization", "Memory Utilization (%)", "Used Flash (%)"]
     date_columns = [
         "s/w release date", "End-of-Sale Date: HW", "Last Date of Support: HW",
-        "End of Routine Failure Analysis Date:  HW", "End of Vulnerability/Security Support: HW",
+        "End of Routine Failure Analysis Date: HW", "End of Vulnerability/Security Support: HW",
         "End of SW Maintenance Releases Date: HW"
     ]
 
     for sheet in wb.worksheets:
+        # --- Header discovery ---
         header_cells = [cell.value for cell in sheet[1]]
         pct_idx = [header_cells.index(c) for c in percentage_columns if c in header_cells]
         date_idx = [header_cells.index(c) for c in date_columns if c in header_cells]
 
-        # Header style
+        # --- Header style ---
         for cell in sheet[1]:
             cell.fill = purple_fill
             cell.alignment = center_wrap_align
             cell.font = bold_font
 
-        # Cells styling
+        # --- Rows ---
         for row in sheet.iter_rows(min_row=2):
+            # 1) If any cell "contains" the phrase, propagate it to the entire row (except column A)
+            special_msg = "No IOS or IOS-XE detected"
+            if any(
+                isinstance(c.value, str) and special_msg.lower() in c.value.strip().lower()
+                for c in row
+            ):
+                for j, c in enumerate(row):
+                    if j != 0:  # keep first column (0th) unchanged
+                        c.value = special_msg
+
+            # 2) Cell-level styling with red/yellow markers
             for cell in row:
                 val = cell.value
                 mark_red = False
+                mark_yellow = False
+
                 if isinstance(val, str):
                     s = val.strip()
+
+                    # Markers
                     red_markers = {
                         "Unavailable",
                         "Invalid inner data format",
                         "Invalid data format",
                         "Check manually",
-                        "Require Manual Check",
                         "Yet to check",
                         "Command not found",
                         "Command not found.",
@@ -493,38 +517,60 @@ def process_and_style_excel(file_path):
                         "Unsupported IOS",
                         "Unsupported version",
                     }
+                    yellow_markers = {
+                        "Require Manual Check",
+                        "Require Manual check",
+                        "No IOS or IOS-XE detected",
+                    }
+
                     if s in red_markers or s.startswith("Error:"):
                         mark_red = True
+                    elif s in yellow_markers:
+                        mark_yellow = True
+
                 if mark_red:
                     cell.fill = red_fill
+                elif mark_yellow:
+                    cell.fill = yellow_fill
+
                 cell.alignment = center_wrap_align
 
-            # percentage formats
+            # 3) Percentage formats
             for idx in pct_idx:
                 c = row[idx]
                 if isinstance(c.value, (int, float)):
-                    c.number_format = '0.00%'
+                    c.number_format = "0.00%"
 
-            # date formats
+            # 4) Date formats
             for idx in date_idx:
                 c = row[idx]
                 if isinstance(c.value, datetime):
-                    c.number_format = 'mmmm dd, yyyy'
+                    c.number_format = "mmmm dd, yyyy"
 
-        # Auto width
+        # --- Auto width ---
         for col_cells in sheet.columns:
-            max_length = max((len(str(c.value)) for c in col_cells if c.value is not None), default=0)
+            max_length = max(
+                (len(str(c.value)) for c in col_cells if c.value is not None),
+                default=0,
+            )
             sheet.column_dimensions[col_cells[0].column_letter].width = max_length + 2
 
-    # Atomic save
-    _safe_save_wb(wb, file_path)
-    logging.info("Post-processing completed: remarks updated, styling applied, saved atomically.")
-
-def add_summary_sheet(file_path):
+    # Save only if we opened the file here
+    if in_place_save:
+        _safe_save_wb(wb, file_path)
+        logging.info("Post-processing completed: remarks updated, styling applied, saved atomically.")
+        
+def add_modules_sheet(file_path=None, wb=None, modules_map=None):
     """
-    Ensure MAIN_SHEET is first and create/refresh a 'Summary' sheet at index 1.
+    Create/replace the MODULE_SHEET at index 1 and write columns from `modules_map`
+    (a dict of lists). Each key becomes a header and its list is written line-by-line
+    under that header (one item per row). If "File name" is present, it is placed as
+    the first column.
     """
-    wb = openpyxl.load_workbook(file_path)
+    in_place_save = False
+    if wb is None:
+        wb = openpyxl.load_workbook(file_path)
+        in_place_save = True
 
     # Ensure main sheet is first and named as required
     if MAIN_SHEET in wb.sheetnames:
@@ -536,169 +582,69 @@ def add_summary_sheet(file_path):
         first_sheet.title = MAIN_SHEET
         main = first_sheet
 
-    # Recreate Summary
-    if SUMMARY_SHEET in wb.sheetnames:
-        del wb[SUMMARY_SHEET]
-    ws = wb.create_sheet(SUMMARY_SHEET, 1)
+    # Recreate Summary (Module) sheet at position 1
+    if MODULE_SHEET in wb.sheetnames:
+        del wb[MODULE_SHEET]
+    ws = wb.create_sheet(MODULE_SHEET, 1)
 
-    headers = [c.value for c in main[1]]
-    rows = [[cell for cell in r] for r in main.iter_rows(min_row=2, values_only=True)]
+    # --- Validate / normalize input ---
+    if modules_map is None:
+        modules_map = {}
+    if not isinstance(modules_map, dict):
+        raise ValueError("modules_map must be a dict of lists, e.g., {'File name': [...]}")
 
-    def col(name):
+    # Column order: put "File name" first if present, then the rest in input order
+    keys = list(modules_map.keys())
+    if "File name" in keys:
+        keys = ["File name"] + [k for k in keys if k != "File name"]
+        
+    purple_fill = PatternFill(start_color="CBC3E3", end_color="CBC3E3", fill_type="solid")
+    center_wrap_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    bold_font = Font(bold=True)
+
+    # --- Write header row ---
+    for col_idx, key in enumerate(keys, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=key)
+        # Optional styling if these names exist in caller's scope
         try:
-            return headers.index(name)
-        except ValueError:
-            return -1
+            cell.fill = purple_fill
+            cell.alignment = center_wrap_align
+            cell.font = bold_font
+        except NameError:
+            pass  # styling variables not defined by caller; skip
 
-    idx_cpu   = col("CPU Utilization")
-    idx_mem   = col("Memory Utilization (%)")
-    idx_flash = col("Used Flash (%)")
-    idx_fan   = col("Fan status")
-    idx_temp  = col("Temperature status")
-    idx_psu   = col("PowerSupply status")
-    idx_fname = col("File name")
-    idx_crit  = col("Critical logs")
-    idx_rem   = col("Remark")
+    # --- Write data rows ---
+    # Find the maximum column height to know how many rows we need
+    max_len = 0
+    for k in keys:
+        col_list = modules_map.get(k, [])
+        try:
+            clen = len(col_list)
+        except TypeError:
+            clen = 1  # not a list-like; treat as single value
+            modules_map[k] = [col_list]
+        max_len = max(max_len, clen)
 
-    def _as_frac(v):
-        if isinstance(v, (int, float)):
-            return float(v) if v <= 1 else None
-        if isinstance(v, str):
-            s = v.strip()
-            m = re.match(r'^(\d+(?:\.\d+)?)\s*%$', s)
-            if m:
-                return float(m.group(1)) / 100.0
-        return None
+    # Fill rows (one item per row under each header)
+    for r in range(max_len):
+        for c, k in enumerate(keys, start=1):
+            col_list = modules_map.get(k, [])
+            value = col_list[r] if r < len(col_list) else None
+            ws.cell(row=2 + r, column=c, value=value)
 
-    def avg(col_idx):
-        vals = []
-        if col_idx >= 0:
-            for r in rows:
-                frac = _as_frac(r[col_idx])
-                if frac is not None:
-                    vals.append(frac)
-        return round(sum(vals) / len(vals), 4) if vals else None
+    # --- Auto width ---
+    for col_cells in ws.columns:
+        # Determine max display width for the column
+        max_length = 0
+        for c in col_cells:
+            if c.value is not None:
+                try:
+                    max_length = max(max_length, len(str(c.value)))
+                except Exception:
+                    pass
+        ws.column_dimensions[col_cells[0].column_letter].width = max_length + 2
 
-    def count_status(col_idx):
-        counts = {"OK": 0, "Not OK": 0, "Unsupported version": 0, "Not available": 0, "Other": 0}
-        if col_idx >= 0:
-            for r in rows:
-                v = r[col_idx]
-                norm = "OK" if isinstance(v, list) and all(str(x).strip().upper() == "OK" for x in v) else str(v).strip()
-                u = norm.upper()
-                if u == "OK":
-                    counts["OK"] += 1
-                elif u in ("NOT OK", "NOT_OK", "NOTOK"):
-                    counts["Not OK"] += 1
-                elif u in ("UNSUPPORTED VERSION", "UNSUPPORTED IOS"):
-                    counts["Unsupported version"] += 1
-                elif u in ("NOT AVAILABLE", "NA"):
-                    counts["Not available"] += 1
-                else:
-                    counts["Other"] += 1
-        return counts
-
-    total_rows = len(rows)
-    stacks = sum(1 for r in rows if idx_fname >= 0 and "_Stack_" in str(r[idx_fname]))
-    singles = total_rows - stacks
-
-    fan_c  = count_status(idx_fan)
-    temp_c = count_status(idx_temp)
-    psu_c  = count_status(idx_psu)
-    crit_yes = sum(1 for r in rows if idx_crit >= 0 and str(r[idx_crit]).strip().upper() == "YES")
-
-    def _norm(s):
-        if s is None:
-            return ""
-        return (
-            str(s).upper()
-            .replace(" ", "")
-            .replace("-", "")
-            .replace("_", "")
-            .replace(":", "")
-            .replace("(", "")
-            .replace(")", "")
-            .strip()
-        )
-
-    non_iosxe = 0
-    if idx_rem >= 0:
-        for r in rows:
-            norm = _norm(r[idx_rem] if idx_rem < len(r) else "")
-            if "NONIOSXE" in norm:
-                non_iosxe += 1
-            elif norm.startswith("INFONONIOSXESKIPPED") or norm.startswith("INFONONIOSXE"):
-                non_iosxe += 1
-            elif norm.startswith("ERRORCOULDNOTREADFILE") or norm.startswith("ERRORPROCESSINGFAILURE"):
-                non_iosxe += 1
-
-    summary = [
-        ["Metric", "Value"],
-        ["Total rows exported", total_rows],
-        ["Single members", singles],
-        ["Stack members", stacks],
-        ["Avg CPU Utilization", avg(idx_cpu)],
-        ["Avg Memory Utilization (%)", avg(idx_mem)],
-        ["Avg Used Flash (%)", avg(idx_flash)],
-        ["Critical logs (YES)", crit_yes],
-        [],
-        ["Fan — OK", fan_c["OK"]],
-        ["Fan — Not OK", fan_c["Not OK"]],
-        ["Fan — Unsupported version", fan_c["Unsupported version"]],
-        ["Fan — Not available", fan_c["Not available"]],
-        ["Fan — Other", fan_c["Other"]],
-        [],
-        ["Temperature — OK", temp_c["OK"]],
-        ["Temperature — Not OK", temp_c["Not OK"]],
-        ["Temperature — Unsupported version", temp_c["Unsupported version"]],
-        ["Temperature — Not available", temp_c["Not available"]],
-        ["Temperature — Other", temp_c["Other"]],
-        [],
-        ["PSU — OK", psu_c["OK"]],
-        ["PSU — Not OK", psu_c["Not OK"]],
-        ["PSU — Unsupported version", psu_c["Unsupported version"]],
-        ["PSU — Not available", psu_c["Not available"]],
-        ["PSU — Other", psu_c["Other"]],
-        [],
-        ["Non-IOS-XE files (skipped)", non_iosxe],
-    ]
-
-    for r_idx, row in enumerate(summary, start=1):
-        for c_idx, val in enumerate(row, start=1):
-            ws.cell(row=r_idx, column=c_idx, value=val)
-
-    # Auto width for first two columns
-    for col_idx in range(1, 3):
-        from openpyxl.utils import get_column_letter
-        max_len = 0
-        for r in range(1, len(summary) + 1):
-            val = ws.cell(row=r, column=col_idx).value
-            max_len = max(max_len, len(str(val)) if val is not None else 0)
-        ws.column_dimensions[get_column_letter(col_idx)].width = max_len + 2
-
-    _safe_save_wb(wb, file_path)
-    logging.info("Main/summary sheet order and naming enforced (with Non-IOS_XE counter).")
-
-def main():
-    try:
-        file_path = r""
-        directory_path = r""
-        ticket_number = "SVR3456789"
-
-        # 1) Parse all eligible files in the directory
-        data = Cisco_IOS_XE.process_directory(directory_path)
-
-        # 2) Create/append Excel (also styles & adds Summary)
-        excel_path = append_to_excel(ticket_number, data)  # returns the file path
-        print(excel_path)  # keep your original print
-
-        # 3) Optional JSON export
-        # json_path = export_json(ticket_number, data, file_path=None)
-        # if json_path:
-        #     print(json_path)
-
-    except Exception as e:
-        print(f"Error in main: {str(e)}")
-
-if __name__ == "__main__":
-    main()
+    # Save only if we opened the file here
+    if in_place_save:
+        _safe_save_wb(wb, file_path)
+        logging.info("Modules sheet created and populated; saved atomically.")
