@@ -1,50 +1,47 @@
-from services.cisco_eox_scrapper import CiscoEoxScraperService
+from __future__ import annotations
 
-svc = CiscoEoxScraperService()
+from EOX_API.services.cisco_eox_scraper import CiscoEoxScraperService
 
-pid = "WS-C2960-24-S"
-technology = "Routing and Switching"
 
-# Step 1: Find device series link
-series_link = svc.find_device_series_link(pid, technology)
-print("Series link:", series_link)
+def main() -> None:
+    service = CiscoEoxScraperService()
+    pid = "WS-C2960-24-S"
+    technology = "Routing and Switching"
 
-if not series_link:
-    raise SystemExit("No series link found for PID")
+    series_link = service.find_device_series_link(pid, technology)
+    print("Series link:", series_link)
+    if not series_link:
+        raise SystemExit("No series link found for PID")
 
-# Step 2: Check EOX presence
-result = svc.eox_check(series_link)
-print("EOX check result:", result)
+    checked = service.eox_check(series_link)
+    print("EOX check result:", checked)
+    if not checked:
+        raise SystemExit("No EOX data on product page")
 
-if not result:
-    raise SystemExit("No EOX data on product page")
+    has_eox, eol_data = checked
+    redirect_link = eol_data.get("url")
+    if not has_eox or not redirect_link:
+        print("No EOX redirect link. Product page dates:", eol_data)
+        return
 
-has_eox, eol_data = result
-redirect_link = (eol_data or {}).get("url")
-print("Redirect link:", redirect_link)
+    announcements = service.eox_details(redirect_link) or {}
+    print("Announcements found:", len(announcements))
+    if not announcements:
+        raise SystemExit("No EOX announcements found")
 
-if not redirect_link:
-    raise SystemExit("EOX redirect link not found")
+    title, announcement_link = next(iter(announcements.items()))
+    print("Using announcement:", title)
 
-# Step 3: Get announcement URLs
-announcements = svc.eox_details(redirect_link) or {}
-print("Number of announcements:", len(announcements))
+    scraped = service.eox_scraping(announcement_link)
+    if not scraped:
+        raise SystemExit("Failed to scrape EOX announcement")
 
-if not announcements:
-    raise SystemExit("No EOX announcements found")
+    milestones, affected_devices = scraped
+    print("\nMilestones:")
+    for key, value in milestones.items():
+        print(f"{key}: {value}")
+    print("\nAffected devices count:", len(affected_devices))
 
-# Step 4: Scrape first announcement
-title, announcement_link = next(iter(announcements.items()))
-print("Using announcement:", title)
 
-scraped = svc.eox_scrapping(announcement_link)
-if not scraped:
-    raise SystemExit("Failed to scrape EOX announcement")
-
-milestones, affected_devices = scraped
-
-print("\nMilestones:")
-for key, value in milestones.items():
-    print(f"{key}: {value}")
-
-print("\nAffected Devices Count:", len(affected_devices))
+if __name__ == "__main__":
+    main()

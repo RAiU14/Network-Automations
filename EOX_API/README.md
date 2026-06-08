@@ -1,375 +1,165 @@
-# Cisco EOX Scraper API (EOX_API)
+# Cisco EOX API
 
-This project provides a Python service and API wrapper to scrape Cisco Support pages to retrieve:
-- Cisco product/technology categories
-- Device series links under a technology category
-- EOX / EOL presence + milestone data (from Cisco announcement pages)
-- Affected device list associated with an EOX announcement
+`EOX_API` is the service package for Cisco End-of-Life (EOX) lookup workflows.
 
-> ✅ Note: The server returning `GET / -> 404` is expected unless a `/` route is defined. Your API is still running fine.
+It supports two lookup styles:
 
----
+1. Web scraping of publicly available Cisco pages. This does not require Cisco API credentials.
+2. Optional Cisco API calls for hardware and software milestone data. This requires Cisco API credentials.
 
 ## Features
 
-- **Service class** (`CiscoEoxScraperService`) for direct Python integration
-- Optional API layer (FastAPI) if you want to expose routes later
-- Uses `requests.Session()` for better performance
-- Uses BeautifulSoup + lxml for parsing
+- FastAPI application entry point: `EOX_API.main:app`
+- EOX routes under `/eox`
+- Optional React frontend served from `front_end/dist` when built
+- Reusable web scraper service
+- Optional Cisco API client
+- Environment-based credential loading
+- Cisco token caching
+- Retries and request timeouts
+- Pydantic request and response models
+- Backward compatibility for the old `cisco_eox_scrapper.py` import name
 
-> ⚠️ Scraping is dependent on Cisco HTML structure. If Cisco changes the page structure, parsing logic may need updates.
+## Install
 
----
-
-## Requirements
-
-- Python 3.10+ recommended (3.12 works)
-- Internet access (Cisco pages are fetched live)
-
-Install dependencies:
+From the repository root:
 
 ```bash
-pip install -r requirements.txt
+pip install -r EOX_API/requirements.txt
 ```
 
-## Project Structure 
-Network-Automations/
-  EOX_API/
-    __init__.py
-    main.py
-    api/
-      __init__.py
-      routes_eox.py          (optional if you expose REST)
-    core/
-      __init__.py
-      config.py
-      log.py
-    models/
-      __init__.py
-      eox.py                 (pydantic models, optional for library usage)
-    services/
-      __init__.py
-      cisco_eox_scraper.py   (main scraper service)
-  requirements.txt
-  README.md
+## Run
 
-
-### Running the Application (Server Mode)
-
-If your EOX_API/main.py defines a FastAPI app, you can run:
 ```bash
-    python -m uvicorn EOX_API.main:app --reload
-```
-
-### You will see something like:
-```bash
-Uvicorn running on http://127.0.0.1:8000
-```
-
-### Why / shows 404
-
-If you open http://127.0.0.1:8000/ in a browser, you'll get:
-
-404 Not Found
-
-
-That just means you have no route for /. The server is still running correctly.
-
-## Using the Application in a Python Program (Recommended)
-
-Most users will want to **import and call** the scraper directly from Python
-(no server required).
-
-The main entry point is the service class:
-
-```python
-from EOX_API.services.cisco_eox_scraper import CiscoEoxScraperService
-```
-
-## Example 1: Get Cisco Product Categories
-
-```python
-from EOX_API.services.cisco_eox_scraper import CiscoEoxScraperService
-
-svc = CiscoEoxScraperService()
-categories = svc.category()
-
-print("Number of categories:", len(categories))
-for name, link in list(categories.items())[:5]:
-    print(f"{name}: {link}")
-```
-
-
-## Example 2: Find Device Series Link Using PID + Technology
-
-```python 
-from EOX_API.services.cisco_eox_scraper import CiscoEoxScraperService
-
-svc = CiscoEoxScraperService()
-
-pid = "C9300-24T"
-technology = "Routing and Switching"
-
-series_link = svc.find_device_series_link(pid, technology)
-
-if not series_link:
-    print("No matching series link found for PID.")
-else:
-    print("Matched series link:", series_link)
-```
-
-
- ## Example 3: Check Product Page for EOX / EOL Information
-
-This checks if a Cisco product page contains:
-- EOX redirect URL
-- Visible EOL/EOS date information
-
-```python 
-from EOX_API.services.cisco_eox_scraper import CiscoEoxScraperService
-
-svc = CiscoEoxScraperService()
-
-product_link = "/c/en/us/support/switches/catalyst-9300-series-switches/series.html"
-result = svc.eox_check(product_link)
-
-if not result:
-    print("No EOX information found.")
-else:
-    has_eox, eol_data = result
-    print("Has EOX redirect:", has_eox)
-    print("EOL Data:", eol_data)
-```
-
-## Example 4: Retrieve EOX Announcement URLs from Redirect Page
-
-```python
-from EOX_API.services.cisco_eox_scraper import CiscoEoxScraperService
-
-svc = CiscoEoxScraperService()
-
-redirect_link = "/c/en/us/products/eos-eol-notice-listing.html"
-announcement_urls = svc.eox_details(redirect_link)
-
-print("Announcements found:", len(announcement_urls))
-for title, link in list(announcement_urls.items())[:5]:
-    print(f"{title} -> {link}")
-```
-
-## Example 5: Scrape Milestones and Affected Devices from Announcement Page
-
-```python 
-from EOX_API.services.cisco_eox_scraper import CiscoEoxScraperService
-
-svc = CiscoEoxScraperService()
-
-announcement_link = "/c/en/us/products/collateral/switches/catalyst-9300-series-switches/eos-eol-notice-c51-xxxxxx.html"
-result = svc.eox_scrapping(announcement_link)
-
-if not result:
-    print("Failed to scrape EOX announcement page.")
-else:
-    milestones, affected_devices = result
-
-    print("Milestones:")
-    for key, value in milestones.items():
-        print(f"  {key}: {value}")
-
-    print("\nAffected Devices (first 10):")
-    for device in affected_devices[:10]:
-        print(" ", device)
-```
-
-## End-to-End Flow: PID → EOX Milestones
-
-Typical automation flow:
-- Find device series link from PID + technology
-- Check product page for EOX/EOL details
-- Retrieve EOX announcement URLs
-- Scrape milestone dates and affected devices
-
-
-# Complete End-to-End Example
-
-```python
-from EOX_API.services.cisco_eox_scrapper import CiscoEoxScraperService
-
-svc = CiscoEoxScraperService()
-
-pid = "WS-C2960-24-S"
-technology = "Routing and Switching"
-
-# Step 1: Find device series link
-series_link = svc.find_device_series_link(pid, technology)
-print("Series link:", series_link)
-
-if not series_link:
-    raise SystemExit("No series link found for PID")
-
-# Step 2: Check EOX presence
-result = svc.eox_check(series_link)
-print("EOX check result:", result)
-
-if not result:
-    raise SystemExit("No EOX data on product page")
-
-has_eox, eol_data = result
-redirect_link = (eol_data or {}).get("url")
-print("Redirect link:", redirect_link)
-
-if not redirect_link:
-    raise SystemExit("EOX redirect link not found")
-
-# Step 3: Get announcement URLs
-announcements = svc.eox_details(redirect_link) or {}
-print("Number of announcements:", len(announcements))
-
-if not announcements:
-    raise SystemExit("No EOX announcements found")
-
-# Step 4: Scrape first announcement
-title, announcement_link = next(iter(announcements.items()))
-print("Using announcement:", title)
-
-scraped = svc.eox_scrapping(announcement_link)
-if not scraped:
-    raise SystemExit("Failed to scrape EOX announcement")
-
-milestones, affected_devices = scraped
-
-print("\nMilestones:")
-for key, value in milestones.items():
-    print(f"{key}: {value}")
-
-print("\nAffected Devices Count:", len(affected_devices))
-```
-
-## Common Issues & Troubleshooting
-
----
-
-### Import Could Not Be Resolved (VS Code)
-
-If VS Code shows an error like:
-Import "EOX_API.services.cisco_eox_scraper" could not be resolved
-
-This is usually an **editor configuration issue**, not a Python error.
-
-#### Fix checklist
-- Open the **repository root folder** in VS Code (the folder that contains `EOX_API/`)
-- Ensure these files exist:
-EOX_API/init.py
-EOX_API/services/init.py
-- Select the correct Python interpreter:
-- `Ctrl + Shift + P` → **Python: Select Interpreter**
-- Run Python as a module:
-```bash
-python -m EOX_API.main
-```
-
-uvicorn EOX_API.main:app Does Not Work (Windows / VS Code)
-
-On Windows, the uvicorn executable may not be on PATH or may use a different Python environment.
-### Recommended way to run the server
-```python
 python -m uvicorn EOX_API.main:app --reload
 ```
 
-
-This ensures:
-- Correct Python interpreter
-- Correct virtual environment
-- Correct module resolution
-- Server Running but / Returns 404
-
-If you see:
-
-```python
-GET / 404 Not Found
-```
-This is expected behavior.
-
-The application does not define a route for / by default.
-The server is still running correctly.
-
-To verify the server:
-- Check terminal output for:
+Health check:
 
 ```bash
-Application startup complete.
-Uvicorn running on http://127.0.0.1:8000
+curl http://127.0.0.1:8000/health
 ```
+
+API docs:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+If the React frontend has been built, FastAPI serves it from:
+
+```text
+http://127.0.0.1:8000
+```
+
+Build the frontend from the repository root with:
 
 ```bash
-ModuleNotFoundError: No module named 'EOX_API'
+cd front_end
+npm install
+npm run build
 ```
-This means Python does not know where the EOX_API package is.
 
-### Fix
-- Run commands from the repository root, not inside EOX_API/
-- Use module execution:
-    ```python
-        python -m EOX_API.main
-    ```
+## Configuration
 
-Do not run individual files directly:
+The scraper works without API credentials.
 
-    ```python
-        python EOX_API/services/cisco_eox_scraper.py  ❌
-    ```
+For Cisco API-backed endpoints, set:
 
-### Cisco Page Parsing Fails / Returns Empty Data
+```bash
+export CISCO_CLIENT_ID="your-client-id"
+export CISCO_CLIENT_SECRET="your-client-secret"
+```
 
-The scraper depends on Cisco’s public HTML structure.
-If Cisco changes the page layout:
-- Some fields may be missing
-- Parsing logic may fail silently
+Optional settings:
 
-### What to do
+```bash
+export CISCO_CREDENTIALS_FILE="/path/to/credentials.json"
+export EOX_DATA_DIR="/path/to/json-cache"
+export EOX_LOG_DIR="/path/to/logs"
+export CISCO_TOKEN_CACHE_FILE="/path/to/.cisco_token_cache.json"
+export EOX_HTTP_TIMEOUT_SECONDS="30"
+export EOX_HTTP_RETRIES="3"
+export EOX_HTTP_BACKOFF_SECONDS="0.5"
+export EOX_USER_AGENT="Network-Automation-EOX/2.0"
+```
 
-- Print or log the fetched HTML
-- Inspect page structure using browser DevTools
-- Update BeautifulSoup selectors accordingly
+Credential file format:
 
-`langdetect` Errors or Unexpected Exceptions
+```json
+{"client_id": "...", "client_secret": "..."}
+```
 
-`langdetect.detect()` may raise exceptions for short or malformed text.
+Legacy credential file format is also supported:
 
-This is already guarded in the code, but if errors persist:
-- Wrap calls in try/except
-- Skip language detection for very short strings
+```json
+{"data": {"client_id": "...", "client_secret": "...", "grant_type": "client_credentials"}}
+```
 
-### Slow Performance or Timeouts
-Scraping is network-bound and may be slow.
-Recommendations: 
-- Avoid running large PID batches sequentially
-- Add caching (JSON / Redis) for repeated lookups
-- Add rate limiting to avoid hitting Cisco too frequently
+## Endpoints
 
-### Editor Warnings vs Runtime Errors
-VS Code (Pylance) warnings do not always indicate runtime failures.
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/eox/categories` | Discover Cisco support categories |
+| `POST` | `/eox/open-category` | Extract series and EOX links from a category page |
+| `POST` | `/eox/find-series-link` | Match a PID to a Cisco product series page |
+| `POST` | `/eox/check-product` | Check a product page for EOX details |
+| `POST` | `/eox/details` | Extract EOX announcement URLs |
+| `POST` | `/eox/scrape` | Scrape milestone and affected-device data |
+| `POST` | `/eox/lookup-pids` | Lookup multiple PIDs from cache or online scraping |
+| `POST` | `/eox/hardware-milestones` | Fetch hardware milestones through Cisco API |
+| `POST` | `/eox/software-milestones` | Fetch software milestones through Cisco API |
 
-### Source of truth
-Always test with:
+## Example requests
+
+### Find series link
+
+```bash
+curl -X POST http://127.0.0.1:8000/eox/find-series-link \
+  -H "Content-Type: application/json" \
+  -d '{"pid":"C9300-24T","technology":"Routing and Switching"}'
+```
+
+### Lookup PIDs using local cache
+
+```bash
+curl -X POST http://127.0.0.1:8000/eox/lookup-pids \
+  -H "Content-Type: application/json" \
+  -d '{"pids":["C9300-24T","ISR4331/K9"],"technology":"Routing and Switching","use_cache":true}'
+```
+
+### Hardware milestones through Cisco API
+
+```bash
+curl -X POST http://127.0.0.1:8000/eox/hardware-milestones \
+  -H "Content-Type: application/json" \
+  -d '{"pids":["C9300-24T"]}'
+```
+
+## Python usage
+
+### Web scraper
+
 ```python
-python -c "from EOX_API.services.cisco_eox_scraper import CiscoEoxScraperService; print('OK')"
+from EOX_API.services.cisco_eox_scraper import CiscoEoxScraperService
+
+service = CiscoEoxScraperService()
+link = service.find_device_series_link("C9300-24T", "Routing and Switching")
+print(link)
 ```
 
-If this prints OK, your code is valid even if VS Code shows warnings.
+### Cisco API client
 
-## Unexpected None or Empty Results
-Some Cisco products:
-- Do not have EOX announcements
-- Have incomplete lifecycle data
-- Are not listed under expected categories
+```python
+from EOX_API.services.cisco_api_client import CiscoApiClient
 
-Always check for None before accessing returned values.
+client = CiscoApiClient()
+print(client.get_hardware_eox_by_product_id(["C9300-24T"]))
+```
 
-## Support Notes
+## Notes
 
-This project scrapes Cisco public pages.
-Use responsibly and consider:
-- Rate limiting
-- Caching
-- Internal-only usage for automation workflows
-
+- The web scraper depends on Cisco page structure and can break if the website changes.
+- Cisco API calls require valid credentials and network access.
+- Always validate important lifecycle data directly with Cisco before making business decisions.
+- Do not commit credentials, token cache files, private device inventories, or generated logs.
