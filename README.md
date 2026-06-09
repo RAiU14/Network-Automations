@@ -317,3 +317,51 @@ Pending enhancements:
 ## Git ignore note
 
 The `.gitignore` file was created with help from gitignore.io and should be expanded to exclude generated logs, token caches, local credentials, temporary reports, and runtime artifacts.
+
+---
+
+## Cisco EOX Manager
+
+A standalone EOX product is now available under:
+
+```text
+Cisco_EOX_Manager/
+```
+
+It includes:
+
+- React GUI
+- FastAPI backend
+- PostgreSQL PID catalog
+- PostgreSQL EOX cache
+- GUI-based database setup
+- GUI-based Cisco API key setup
+- Bundled preset import
+- Auto_Pop preset generator
+- GraphQL-ready endpoint
+
+Run it:
+
+```bash
+cd Cisco_EOX_Manager
+cp .env.example .env
+docker compose up --build
+```
+
+Open:
+
+```text
+http://127.0.0.1:5173
+```
+
+Generate/refresh the bundled PID preset:
+
+```bash
+python tools/auto_pop_pid_database.py --output data/presets/eox_pid_seed.json
+```
+
+Or from the old location:
+
+```bash
+python Database/auto_pop.py --output Cisco_EOX_Manager/data/presets/eox_pid_seed.json
+```

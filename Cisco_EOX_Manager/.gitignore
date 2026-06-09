@@ -1,0 +1,8 @@
+.env
+*.pyc
+__pycache__/
+backend/.venv/
+front_end/node_modules/
+front_end/dist/
+data/.eox_secret.key
+logs/
