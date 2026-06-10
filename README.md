@@ -1,346 +1,46 @@
 # Cisco_Automations
 
-A collection of Python automation programs created to make common network engineering tasks faster, easier, and more repeatable.
+This repository contains several network automation experiments and tools. The older folders are intentionally kept for reference and backward compatibility.
 
-This repository is a personal and learning-focused project. It includes tools for Cisco EOX lookups, network connectivity checks, log collection, simple local data handling, and PM report generation.
-
-## Main focus: Cisco EOX automation
-
-The Cisco EOX package helps gather End-of-Life (EOX) information for Cisco products by passing a product ID, model number, or device series as input.
-
-The project now has three EOX-facing layers:
-
-| Folder | Purpose | API required |
-|---|---|---|
-| `EOX/` | Backward-compatible Python wrapper used by older scripts and PM report flows | No |
-| `EOX_API/` | Reusable service package with scraper services, optional Cisco API client, and FastAPI routes | Optional |
-| `front_end/` | React/Vite browser UI for using the FastAPI EOX routes | Optional backend credentials only |
-
-### Cisco EOX web scraping package
-
-The scraper-based flow uses publicly available Cisco web pages to find product lifecycle information without requiring Cisco API credentials.
-
-Use this when you want to:
-
-- Search for Cisco product or model lifecycle information.
-- Find the most likely Cisco product series page for a PID.
-- Check whether a product page contains EOX information.
-- Scrape EOX milestone details from Cisco announcement pages.
-- Enrich PM report output with lifecycle details.
-
-### Cisco EOX API service
-
-`EOX_API/` adds a cleaner service-oriented structure around the EOX logic.
-
-It includes:
-
-- FastAPI endpoints for EOX lookup workflows.
-- A reusable scraper service: `EOX_API.services.cisco_eox_scraper`.
-- A Cisco API client: `EOX_API.services.cisco_api_client`.
-- Environment-based credential loading.
-- Token caching for Cisco API calls.
-- Request retries, timeouts, and structured logging.
-- Compatibility support for the old misspelled module name `cisco_eox_scrapper.py`.
-
-The Cisco API client is optional. The web scraping functionality can still be used without Cisco API credentials.
-
-## Disclaimer
-
-This tool is not affiliated with, maintained by, or endorsed by Cisco.
-
-All web-scraped data is sourced from publicly available Cisco web pages. The Cisco API functionality requires valid Cisco API access configured by the user.
-
-Use this project at your own discretion and risk. The author does not take responsibility for how this tool is used, including commercial usage, production automation, product sales, procurement, audits, or business decisions.
-
-Always validate lifecycle information directly from Cisco's official website before making business, support, renewal, migration, or purchasing decisions.
-
-## Repository structure
-
-```text
-Cisco_Automations/
-├── EOX/
-│   ├── API.py
-│   ├── Cisco_EOX.py
-│   └── requirements.txt
-├── EOX_API/
-│   ├── api/
-│   ├── core/
-│   ├── models/
-│   ├── services/
-│   ├── main.py
-│   ├── sample.py
-│   ├── requirements.txt
-│   └── README.md
-├── front_end/
-│   ├── src/
-│   ├── index.html
-│   ├── package.json
-│   ├── vite.config.js
-│   └── README.md
-├── Database/
-├── PM_Report/
-├── Connection.py
-├── Log_Capture.py
-├── Alive_Checks.py
-└── README.md
-```
-
-## Installation
-
-Install EOX dependencies from the repository root:
-
-```bash
-pip install -r EOX_API/requirements.txt
-```
-
-For legacy scraper-only usage, you can also install:
-
-```bash
-pip install -r EOX/requirements.txt
-```
-
-## Cisco API credentials
-
-The scraper does not require API credentials.
-
-Cisco API-backed functions require credentials. Configure them with environment variables:
-
-```bash
-export CISCO_CLIENT_ID="your-client-id"
-export CISCO_CLIENT_SECRET="your-client-secret"
-```
-
-Optional environment variables:
-
-```bash
-export CISCO_CREDENTIALS_FILE="/path/to/credentials.json"
-export EOX_DATA_DIR="/path/to/json-cache"
-export EOX_LOG_DIR="/path/to/logs"
-export CISCO_TOKEN_CACHE_FILE="/path/to/.cisco_token_cache.json"
-```
-
-`CISCO_CREDENTIALS_FILE` supports either of these formats:
-
-```json
-{"client_id": "...", "client_secret": "..."}
-```
-
-```json
-{"data": {"client_id": "...", "client_secret": "...", "grant_type": "client_credentials"}}
-```
-
-Do not commit real credentials, token cache files, or private data to Git.
-
-## Running the EOX API and React UI
-
-Start the FastAPI application from the repository root:
-
-```bash
-python -m uvicorn EOX_API.main:app --reload
-```
-
-Health check:
-
-```bash
-curl http://127.0.0.1:8000/health
-```
-
-Interactive API documentation is available through FastAPI when the app is running:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-### React development mode
-
-Run the backend first, then start the React/Vite frontend in a second terminal:
-
-```bash
-cd front_end
-npm install
-npm run dev
-```
-
-Open:
-
-```text
-http://127.0.0.1:5173
-```
-
-The Vite dev server proxies API calls to the FastAPI backend at `http://127.0.0.1:8000`.
-
-### Single-server mode
-
-Build the React app and serve it from FastAPI:
-
-```bash
-cd front_end
-npm install
-npm run build
-cd ..
-python -m uvicorn EOX_API.main:app --reload
-```
-
-Open:
-
-```text
-http://127.0.0.1:8000
-```
-
-When `front_end/dist` exists, FastAPI serves the React app from `/` and keeps the API under `/eox`.
-
-## EOX API endpoints
-
-| Method | Endpoint | Purpose |
-|---|---|---|
-| `GET` | `/eox/categories` | List Cisco support categories discovered by the scraper |
-| `POST` | `/eox/open-category` | Open a Cisco category page and extract product series links |
-| `POST` | `/eox/find-series-link` | Find the best matching Cisco product series page for a PID |
-| `POST` | `/eox/check-product` | Check a Cisco product page for EOX information |
-| `POST` | `/eox/details` | Extract EOX announcement links from a Cisco redirect/details page |
-| `POST` | `/eox/scrape` | Scrape milestone data and affected products from an EOX announcement page |
-| `POST` | `/eox/lookup-pids` | Lookup EOX data for one or more PIDs using cache or online scraping |
-| `POST` | `/eox/hardware-milestones` | Fetch hardware EOX milestone data through Cisco API |
-| `POST` | `/eox/software-milestones` | Fetch software milestone data through Cisco API |
-
-## Python usage
-
-### Scraper service
-
-```python
-from EOX_API.services.cisco_eox_scraper import CiscoEoxScraperService
-
-service = CiscoEoxScraperService()
-
-pid = "C9300-24T"
-technology = "Routing and Switching"
-
-series_link = service.find_device_series_link(pid, technology)
-print(series_link)
-```
-
-### Legacy wrapper
-
-Existing code can continue to use `EOX.Cisco_EOX`:
-
-```python
-from EOX.Cisco_EOX import request_EOX_data_from_local_db
-
-pids = ["C9300-24T", "ISR4331/K9"]
-results = request_EOX_data_from_local_db(pids, "Routing and Switching")
-print(results)
-```
-
-### Cisco API client
-
-```python
-from EOX_API.services.cisco_api_client import CiscoApiClient
-
-client = CiscoApiClient()
-result = client.get_hardware_eox_by_product_id(["C9300-24T"])
-print(result)
-```
-
-## Other modules
-
-### Connection.py
-
-Contains reusable connection snippets for connecting to network devices and running Netmiko commands.
-
-### Log_Capture.py
-
-Collects logs from Cisco switches or other network devices in bulk by passing IP addresses and required show commands. Log files are saved using the device hostname where possible.
-
-### Alive_Checks.py
-
-Provides simple device reachability checks using built-in Python functionality. It performs an operating system check before running ping commands and can be used to validate whether devices are reachable directly or through a jump host flow.
-
-### Database directory
-
-Contains database and local data experiments used to store and retrieve EOX-related data.
-
-Current concepts include:
-
-- SQLite-based lookup using `EOX.db`.
-- CSV-based lookup logic.
-- JSON-based lookup logic.
-- Edit and retrieve functions for existing lifecycle data.
-
-Some database features are still work in progress.
-
-### auto_pop.py
-
-A utility concept for automatically retrieving available EOX data from Cisco sources using the EOX package.
-
-### PM_Report folder
-
-Contains scripts to gather health parameters from network appliances based on technology and vendor.
-
-Current status:
-
-- Parses available log data.
-- Extracts basic device health information.
-- Marks unavailable data as `NA`.
-- Supports ongoing integration with EOX lifecycle enrichment.
-
-This area is still under active development.
-
-## Current working status
-
-Working:
-
-- EOX scraper service structure.
-- Legacy `EOX.Cisco_EOX` wrapper compatibility.
-- FastAPI EOX route structure.
-- React/Vite frontend for browser-based EOX lookup.
-- Optional Cisco API client integration.
-- Environment-based Cisco credential handling.
-- JSON cache path configuration.
-
-Known limitations:
-
-- Web scraping may break if Cisco changes page layout or blocks automated requests.
-- Scraped data should be treated as advisory until validated directly with Cisco.
-- Cisco API-backed functions require valid credentials and network access.
-- Local JSON cache quality depends on how recently it was populated.
-
-Pending enhancements:
-
-- Add automated parser and scraper tests with fixtures.
-- Add a CLI command for bulk PID lookup.
-- Add richer result tables and CSV/Excel export in the React UI.
-- Add Docker support.
-- Add CI linting and test workflow.
-- Replace large JSON cache with SQLite or another structured store.
-- Add authentication if the FastAPI app is deployed beyond local/internal usage.
-
-## Git ignore note
-
-The `.gitignore` file was created with help from gitignore.io and should be expanded to exclude generated logs, token caches, local credentials, temporary reports, and runtime artifacts.
-
----
-
-## Cisco EOX Manager
-
-A standalone EOX product is now available under:
+The current active product work is:
 
 ```text
 Cisco_EOX_Manager/
 ```
 
-It includes:
+Cisco EOX Manager is a standalone Cisco End-of-Life / End-of-Sale data product with its own backend, frontend, database models, Auto_Pop crawler, GraphQL read layer, and tests.
 
-- React GUI
-- FastAPI backend
-- PostgreSQL PID catalog
-- PostgreSQL EOX cache
-- GUI-based database setup
-- GUI-based Cisco API key setup
-- Bundled preset import
-- Auto_Pop preset generator
-- GraphQL-ready endpoint
+## Active product: Cisco_EOX_Manager
 
-Run it:
+Use this when you want to:
+
+- Build a local Cisco PID/EOX database.
+- Scrape Cisco EOX announcement tables.
+- Store every affected PID row and lifecycle field in PostgreSQL or SQLite.
+- Query the database through GraphQL, including JSON-shaped retrieval directly from DB.
+- Use a beginner-friendly GUI for setup, lookup, raw Cisco table viewing, Auto_Pop jobs, and exports.
+- Prepare for later Cisco API live testing.
+- Run without account/admin authentication by default for local free-tool usage.
+- Use PostgreSQL JSONB/GIN indexing for scalable raw table evidence search.
+
+Main folder:
+
+```text
+Network-Automations/
+└── Cisco_EOX_Manager/
+```
+
+Detailed documentation:
+
+```text
+Cisco_EOX_Manager/README.md
+Cisco_EOX_Manager/backend/README.md
+Cisco_EOX_Manager/front_end/README.md
+Cisco_EOX_Manager/tests/README.md
+Database/README_AUTO_POP.md
+```
+
+## Cisco EOX Manager quick start
 
 ```bash
 cd Cisco_EOX_Manager
@@ -351,17 +51,78 @@ docker compose up --build
 Open:
 
 ```text
-http://127.0.0.1:5173
+React GUI:      http://127.0.0.1:5173
+Backend docs:   http://127.0.0.1:8000/docs
+GraphQL:        http://127.0.0.1:8000/graphql
 ```
 
-Generate/refresh the bundled PID preset:
+Run Auto_Pop with a small safe test from CLI, or start it from the GUI Auto_Pop jobs panel:
 
 ```bash
-python tools/auto_pop_pid_database.py --output data/presets/eox_pid_seed.json
+python tools/auto_pop_pid_database.py --limit-categories 1 --limit-series-eox 10 --limit-announcements 2
 ```
 
-Or from the old location:
+Use SQLite for quick local testing:
 
 ```bash
-python Database/auto_pop.py --output Cisco_EOX_Manager/data/presets/eox_pid_seed.json
+python tools/auto_pop_pid_database.py --sqlite --limit-categories 1
 ```
+
+## Current Cisco EOX Manager direction
+
+```text
+Cisco website / Cisco API later
+        ↓
+Auto_Pop / lookup engine
+        ↓
+PostgreSQL or SQLite
+        ↓
+GraphQL / GUI / CSV / Excel exports
+```
+
+The database is the source of truth. JSON seed/import/export files are no longer part of the Cisco EOX Manager workflow. JSON-shaped retrieval comes from GraphQL queries against the database.
+
+## Repository folders
+
+```text
+Network-Automations/
+├── Cisco_EOX_Manager/   # Active standalone Cisco EOX product
+├── EOX/                 # Legacy scraper compatibility code
+├── EOX_API/             # Legacy/service-style EOX API code
+├── Database/            # Legacy DB experiments plus Auto_Pop wrapper
+├── PM_Report/           # Older PM report work, currently not part of EOX Manager
+├── EN-NMS/              # Older NMS work
+├── WebPage/             # Older web workflow
+├── front_end/           # Older EOX_API React UI experiment
+└── other legacy scripts
+```
+
+## Auto_Pop wrapper
+
+The old command still works:
+
+```bash
+python Database/auto_pop.py --limit-categories 1
+```
+
+It forwards to:
+
+```text
+Cisco_EOX_Manager/tools/auto_pop_pid_database.py
+```
+
+## Tests
+
+```bash
+cd Cisco_EOX_Manager
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+## Disclaimer
+
+This project is not affiliated with or endorsed by Cisco. Scraped data comes from publicly available Cisco pages. Always validate lifecycle dates directly with Cisco before using the data for renewals, migrations, procurement, audits, or customer-facing decisions.
+
+## GUI behavior
+
+The GUI no longer asks users to choose API or scraper. Users add or remove PID chips and click search. The backend checks the DB first, uses Cisco API only if credentials are already configured, then falls back to scraping and saves new data.

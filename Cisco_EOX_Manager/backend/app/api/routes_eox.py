@@ -11,13 +11,9 @@ from app.schemas import (
     CacheStatsResponse,
     CatalogDiscoveryRequest,
     CatalogDiscoveryResponse,
-    LegacyImportRequest,
-    LegacyImportResponse,
     LookupRequest,
     LookupResponse,
     PidCatalogSearchResponse,
-    PresetImportRequest,
-    PresetStatusResponse,
 )
 from app.services.eox_orchestrator import EoxOrchestrator
 
@@ -68,21 +64,6 @@ def search_pid_catalog(
 @router.get("/stats", response_model=CacheStatsResponse)
 def cache_stats(db: Session = Depends(get_db)) -> CacheStatsResponse:
     return EoxOrchestrator(db).get_stats()
-
-
-@router.get("/preset", response_model=PresetStatusResponse)
-def preset_status(db: Session = Depends(get_db)) -> PresetStatusResponse:
-    return EoxOrchestrator(db).preset_status()
-
-
-@router.post("/import-preset", response_model=LegacyImportResponse)
-def import_preset(request: PresetImportRequest, db: Session = Depends(get_db)) -> LegacyImportResponse:
-    return EoxOrchestrator(db).import_preset_json(path=request.path, overwrite=request.overwrite)
-
-
-@router.post("/import-legacy-json", response_model=LegacyImportResponse)
-def import_legacy_json(request: LegacyImportRequest, db: Session = Depends(get_db)) -> LegacyImportResponse:
-    return EoxOrchestrator(db).import_legacy_json(path=request.path, overwrite=request.overwrite)
 
 
 @router.post("/discover-catalog", response_model=CatalogDiscoveryResponse)

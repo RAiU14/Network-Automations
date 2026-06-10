@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.db.models import LookupHistory, PidCatalog, ProductEox
 from app.schemas import (
@@ -17,12 +14,10 @@ from app.schemas import (
     CacheStatsResponse,
     CatalogDiscoveryResponse,
     EoxProductOut,
-    LegacyImportResponse,
     LookupResponse,
     PidCatalogOut,
     PidCatalogSearchResponse,
     PidLookupResult,
-    PresetStatusResponse,
 )
 from app.services.cisco_api_client import CiscoApiClient, CiscoApiError
 from app.services.cisco_scraper import CiscoEoxScraperService
@@ -98,7 +93,7 @@ def _status_from_payload(payload: Any, source: str) -> str:
             return "not_announced"
         if "error" in text:
             return "error"
-    return "unknown" if source in {"cache", "preset"} else "not_found"
+    return "unknown" if source in {"cache", "seed"} else "not_found"
 
 
 def product_to_out(product: ProductEox) -> EoxProductOut:
@@ -143,7 +138,6 @@ def catalog_to_out(entry: PidCatalog) -> PidCatalogOut:
 class EoxOrchestrator:
     def __init__(self, db: Session):
         self.db = db
-        self.settings = get_settings()
 
     def _get_product(self, pid: str) -> ProductEox | None:
         return self.db.query(ProductEox).filter(ProductEox.normalized_pid == normalize_pid(pid)).one_or_none()
@@ -165,7 +159,7 @@ class EoxOrchestrator:
         product_name: str | None = None,
         product_url: str | None = None,
         is_eox: bool = False,
-        source: str = "preset",
+        source: str = "seed",
         payload: Mapping[str, Any] | None = None,
         overwrite: bool = True,
     ) -> tuple[PidCatalog, bool]:
@@ -235,7 +229,7 @@ class EoxOrchestrator:
         product.eox_announcement_url = _payload_value(payload_dict, FIELD_ALIASES["eox_announcement_url"])
         product.product_bulletin_url = _payload_value(payload_dict, FIELD_ALIASES["product_bulletin_url"])
         product.last_seen_at = datetime.now(timezone.utc)
-        product.last_scraped_at = datetime.now(timezone.utc) if source in {"api", "scraper", "legacy-json", "preset"} else product.last_scraped_at
+        product.last_scraped_at = datetime.now(timezone.utc) if source in {"api", "scraper", "seed"} else product.last_scraped_at
         return product
 
     def _record_history(
@@ -274,7 +268,7 @@ class EoxOrchestrator:
             product=product,
             source_used="cache",
             status=product.status,
-            message="Served from PostgreSQL cache",
+            message="Served from local database cache",
             snapshot=product.payload,
         )
         return PidLookupResult(
@@ -284,7 +278,7 @@ class EoxOrchestrator:
             from_cache=True,
             source_used="cache",
             status=product.status,
-            message="Served from PostgreSQL cache",
+            message="Served from local database cache",
             product=product_to_out(product),
             catalog_entry=catalog_to_out(catalog_entry) if catalog_entry else None,
             data=product.payload or {},
@@ -296,7 +290,7 @@ class EoxOrchestrator:
             normalized_pid=normalize_pid(pid),
             found=True,
             from_cache=True,
-            source_used="preset",
+            source_used="seed",
             status="catalog_only",
             message="PID/series found in local PID catalog, but no EOX milestone payload is cached yet",
             product=None,
@@ -322,14 +316,14 @@ class EoxOrchestrator:
             if cached and not refresh:
                 results_by_norm[normalize_pid(pid)] = self._cache_result(pid, technology, cached)
             else:
-                # Keep local catalog lookup visible, but continue online lookup unless auto_learn is disabled.
                 catalog_entry = self._get_catalog(pid, technology)
                 if catalog_entry and not refresh and not auto_learn:
                     results_by_norm[normalize_pid(pid)] = self._catalog_only_result(pid, technology, catalog_entry)
                 else:
                     missing.append(pid)
 
-        if missing and prefer_api:
+        api_available = CredentialStore(self.db).cisco_credentials_configured()
+        if missing and (prefer_api or api_available):
             api_results, unresolved = self._lookup_with_api(missing, technology, auto_learn=auto_learn)
             results_by_norm.update({normalize_pid(item.pid): item for item in api_results})
             missing = unresolved
@@ -344,7 +338,7 @@ class EoxOrchestrator:
         summary = {
             "total": len(final_results),
             "cache_hits": sum(1 for item in final_results if item.source_used == "cache"),
-            "catalog_hits": sum(1 for item in final_results if item.source_used == "preset"),
+            "catalog_hits": sum(1 for item in final_results if item.source_used == "seed"),
             "api_hits": sum(1 for item in final_results if item.source_used == "api"),
             "scraper_hits": sum(1 for item in final_results if item.source_used == "scraper"),
             "not_found": sum(1 for item in final_results if not item.found),
@@ -547,101 +541,6 @@ class EoxOrchestrator:
             recent_lookups=int(recent),
         )
 
-    def import_legacy_json(self, *, path: str | None = None, overwrite: bool = False) -> LegacyImportResponse:
-        default_path = self.settings.default_eox_db_path
-        source_path = Path(path).expanduser().resolve() if path else default_path
-        return self.import_preset_json(path=str(source_path), overwrite=overwrite)
-
-    def preset_status(self) -> PresetStatusResponse:
-        path = self.settings.preset_seed_path
-        if not path.exists():
-            return PresetStatusResponse(
-                preset_available=False,
-                preset_path=str(path),
-                approximate_records=None,
-                message="Preset file is not present yet. Generate it with tools/auto_pop_pid_database.py or copy your JSON to this path.",
-            )
-        approximate = None
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            approximate = self._count_preset_records(data)
-        except Exception:
-            pass
-        return PresetStatusResponse(
-            preset_available=True,
-            preset_path=str(path),
-            approximate_records=approximate,
-            message="Bundled preset file is available",
-        )
-
-    def import_preset_json(self, *, path: str | None = None, overwrite: bool = False) -> LegacyImportResponse:
-        source_path = Path(path).expanduser().resolve() if path else self.settings.preset_seed_path
-        if not source_path.exists():
-            return LegacyImportResponse(
-                imported=0,
-                skipped=0,
-                catalog_imported=0,
-                catalog_skipped=0,
-                message=f"Preset JSON file not found: {source_path}",
-            )
-        data = json.loads(source_path.read_text(encoding="utf-8"))
-        imported = skipped = catalog_imported = catalog_skipped = 0
-
-        for item in self._iter_catalog_entries(data):
-            pid = str(item.get("pid") or item.get("name") or item.get("product_name") or "").strip()
-            if not pid:
-                continue
-            _, created_or_changed = self._save_catalog_entry(
-                pid=pid,
-                technology=item.get("technology") or item.get("category_name") or "Imported",
-                category_name=item.get("category_name") or item.get("technology") or "Imported",
-                product_name=item.get("product_name") or item.get("name") or pid,
-                product_url=item.get("product_url") or item.get("url"),
-                is_eox=bool(item.get("is_eox", False)),
-                source=item.get("source") or "preset",
-                payload=item,
-                overwrite=overwrite,
-            )
-            if created_or_changed or overwrite:
-                catalog_imported += 1
-            else:
-                catalog_skipped += 1
-
-        for pid, payload, technology, source in self._iter_eox_records(data):
-            if not pid:
-                continue
-            if not overwrite and self._get_product(pid):
-                skipped += 1
-                continue
-            self._save_product(
-                pid=str(pid),
-                technology=technology or "Imported",
-                payload=payload,
-                source=source or "preset",
-                raw_response={"preset": payload},
-            )
-            self._save_catalog_entry(
-                pid=str(pid),
-                technology=technology or "Imported",
-                category_name=technology or "Imported",
-                product_name=str(_payload_value(payload if isinstance(payload, Mapping) else {}, FIELD_ALIASES["product_name"]) or pid),
-                product_url=str(_payload_value(payload if isinstance(payload, Mapping) else {}, FIELD_ALIASES["product_bulletin_url"]) or "") or None,
-                is_eox=True,
-                source=source or "preset",
-                payload=payload if isinstance(payload, Mapping) else {"value": payload},
-                overwrite=True,
-            )
-            imported += 1
-
-        self.db.commit()
-        return LegacyImportResponse(
-            imported=imported,
-            skipped=skipped,
-            catalog_imported=catalog_imported,
-            catalog_skipped=catalog_skipped,
-            message=f"Imported preset from {source_path}",
-        )
-
     def discover_catalog(
         self,
         *,
@@ -721,58 +620,3 @@ class EoxOrchestrator:
             catalog_skipped=skipped,
             message=f"Catalog discovery completed. Series pages opened for models: {series_pages_opened}",
         )
-
-    @staticmethod
-    def _count_preset_records(data: Any) -> int:
-        if isinstance(data, Mapping):
-            count = 0
-            count += len(data.get("pid_catalog") or []) if isinstance(data.get("pid_catalog"), list) else 0
-            count += len(data.get("eox_records") or []) if isinstance(data.get("eox_records"), list) else 0
-            count += len(data.get("EOXRecord") or []) if isinstance(data.get("EOXRecord"), list) else 0
-            if not count and all(isinstance(value, Mapping) for value in data.values()):
-                count = len(data)
-            return count
-        if isinstance(data, list):
-            return len(data)
-        return 0
-
-    @staticmethod
-    def _iter_catalog_entries(data: Any) -> Iterable[Mapping[str, Any]]:
-        if isinstance(data, Mapping):
-            entries = data.get("pid_catalog")
-            if isinstance(entries, list):
-                for entry in entries:
-                    if isinstance(entry, Mapping):
-                        yield entry
-            return
-        if isinstance(data, list):
-            for entry in data:
-                if isinstance(entry, Mapping) and not any(key in entry for key in ("EndOfSaleDate", "EOLProductID")):
-                    yield entry
-
-    @staticmethod
-    def _iter_eox_records(data: Any) -> Iterable[tuple[str, Any, str, str]]:
-        if isinstance(data, Mapping):
-            if isinstance(data.get("EOXRecord"), list):
-                for record in data["EOXRecord"]:
-                    if isinstance(record, Mapping):
-                        pid = str(record.get("EOLProductID") or record.get("ProductID") or record.get("EOXInputValue") or "").strip()
-                        yield pid, record, "Imported", "preset"
-            if isinstance(data.get("eox_records"), list):
-                for record in data["eox_records"]:
-                    if not isinstance(record, Mapping):
-                        continue
-                    pid = str(record.get("pid") or record.get("EOLProductID") or "").strip()
-                    payload = record.get("payload") if isinstance(record.get("payload"), Mapping) else record
-                    yield pid, payload, str(record.get("technology") or "Imported"), str(record.get("source") or "preset")
-            # Legacy flat {pid: payload} JSON.
-            structural_keys = {"schema_version", "generated_at", "source", "pid_catalog", "eox_records", "EOXRecord", "metadata"}
-            if not any(key in data for key in structural_keys):
-                for pid, payload in data.items():
-                    yield str(pid), payload, "Imported", "legacy-json"
-        elif isinstance(data, list):
-            for record in data:
-                if isinstance(record, Mapping):
-                    pid = str(record.get("pid") or record.get("EOLProductID") or record.get("ProductID") or "").strip()
-                    payload = record.get("payload") if isinstance(record.get("payload"), Mapping) else record
-                    yield pid, payload, str(record.get("technology") or "Imported"), str(record.get("source") or "preset")

@@ -24,6 +24,7 @@ services:
       EOX_DATA_DIR: /product/data
       EOX_LOG_DIR: /product/logs
       EOX_SECRET_KEY: ${EOX_SECRET_KEY:-}
+      EOX_AUTH_ENABLED: ${EOX_AUTH_ENABLED:-false}
       CISCO_CLIENT_ID: ${CISCO_CLIENT_ID:-}
       CISCO_CLIENT_SECRET: ${CISCO_CLIENT_SECRET:-}
       CISCO_ACCESS_TOKEN: ${CISCO_ACCESS_TOKEN:-}

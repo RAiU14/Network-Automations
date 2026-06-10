@@ -28,7 +28,8 @@ def get_engine(database_url: str | None = None) -> Engine:
     with _engine_lock:
         engine = _engine_cache.get(url)
         if engine is None:
-            engine = create_engine(url, future=True, pool_pre_ping=True)
+            connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+            engine = create_engine(url, future=True, pool_pre_ping=True, connect_args=connect_args)
             _engine_cache[url] = engine
         _current_url = url
         return engine

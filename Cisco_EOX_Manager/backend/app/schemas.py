@@ -24,13 +24,17 @@ class SetupStatusResponse(BaseModel):
     token_url: str
     has_cached_token: bool
     graphql_enabled: bool = True
-    preset_available: bool = False
-    preset_path: str | None = None
+    recommended_database_type: str = "sqlite"
 
 
 class DatabaseSetupRequest(BaseModel):
-    database_url: str | None = Field(None, description="Full SQLAlchemy database URL")
-    host: str = "db"
+    database_type: Literal["postgresql", "sqlite", "url"] = Field(
+        "postgresql",
+        description="Database mode selected from the setup UI",
+    )
+    database_url: str | None = Field(None, description="Full SQLAlchemy database URL for advanced mode")
+    sqlite_path: str | None = Field(None, description="SQLite file path. Relative paths are stored in the product data directory.")
+    host: str = "postgres"
     port: int = Field(5432, ge=1, le=65535)
     database: str = "eox_cache"
     username: str = "eox_user"
@@ -108,7 +112,7 @@ class PidCatalogOut(BaseModel):
     product_name: str | None = None
     product_url: str | None = None
     is_eox: bool = False
-    source: str = "preset"
+    source: str = "seed"
     payload: dict[str, Any] = Field(default_factory=dict)
     updated_at: datetime | None = None
 
@@ -120,7 +124,7 @@ class PidLookupResult(BaseModel):
     normalized_pid: str
     found: bool
     from_cache: bool
-    source_used: Literal["cache", "api", "scraper", "preset", "none", "error"]
+    source_used: Literal["cache", "api", "scraper", "seed", "none", "error"]
     status: str
     message: str | None = None
     product: EoxProductOut | None = None
@@ -171,28 +175,29 @@ class CacheStatsResponse(BaseModel):
     recent_lookups: int
 
 
-class LegacyImportRequest(BaseModel):
-    path: str | None = None
-    overwrite: bool = False
-
-
-class LegacyImportResponse(BaseModel):
-    imported: int
-    skipped: int
-    catalog_imported: int = 0
-    catalog_skipped: int = 0
+class FrontendLogRequest(BaseModel):
+    level: Literal["debug", "info", "warning", "error"] = "info"
+    event_type: str = "frontend"
     message: str
+    source: str = "front_end"
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
-class PresetImportRequest(BaseModel):
-    path: str | None = None
-    overwrite: bool = False
+class SystemEventOut(BaseModel):
+    id: int
+    level: str
+    event_type: str
+    source: str | None = None
+    message: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
 
 
-class PresetStatusResponse(BaseModel):
-    preset_available: bool
-    preset_path: str
-    approximate_records: int | None = None
+class SystemEventResponse(BaseModel):
+    ok: bool
+    event: SystemEventOut | None = None
     message: str
 
 
@@ -210,3 +215,58 @@ class CatalogDiscoveryResponse(BaseModel):
     catalog_inserted_or_updated: int
     catalog_skipped: int
     message: str
+
+
+class AuthSetupRequest(BaseModel):
+    admin_token: str = Field(..., min_length=12)
+    current_token: str | None = None
+
+
+class AutoPopJobRequest(BaseModel):
+    categories: list[str] = Field(default_factory=list)
+    category_urls: list[str] = Field(default_factory=list)
+    limit_categories: int | None = Field(None, ge=1, le=100)
+    limit_series_eox: int | None = Field(None, ge=1)
+    limit_announcements: int | None = Field(None, ge=1)
+    eox_candidates_only: bool = False
+    parse_workers: int = Field(2, ge=1, le=8)
+    delay: float = Field(1.0, ge=0, le=60)
+    category_break: float = Field(10.0, ge=0, le=3600)
+    force_refresh: bool = False
+    overwrite: bool = False
+    allow_empty: bool = False
+    use_api: bool = False
+    note: str | None = None
+
+
+class AutoPopJobOut(BaseModel):
+    id: int
+    status: str
+    requested_by: str | None = None
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    command: list[str] = Field(default_factory=list)
+    log_file: str | None = None
+    process_id: int | None = None
+    return_code: int | None = None
+    stats: dict[str, Any] = Field(default_factory=dict)
+    last_error: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class AutoPopJobListResponse(BaseModel):
+    items: list[AutoPopJobOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class ExportRequest(BaseModel):
+    dataset: Literal["products", "pid_catalog", "affected_products", "announcements", "checkpoints", "system_events"] = "products"
+    format: Literal["csv", "xlsx"] = "csv"
+    search: str | None = None
+    limit: int = Field(10000, ge=1, le=100000)

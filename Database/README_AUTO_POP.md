@@ -1,34 +1,30 @@
-# Auto_Pop update
+# Auto_Pop compatibility wrapper
 
-The maintained Auto_Pop workflow has moved to the standalone product folder:
+The maintained Auto_Pop engine lives here:
 
 ```text
 Cisco_EOX_Manager/tools/auto_pop_pid_database.py
 ```
 
-The old files below are now compatibility wrappers:
+The old files remain for convenience:
 
 ```text
 Database/auto_pop.py
 Database/auto_pop_enhanced.py
 ```
 
+They simply forward arguments to the maintained Cisco EOX Manager tool.
+
 Run from the repository root:
 
 ```bash
-python Database/auto_pop.py --output Cisco_EOX_Manager/data/presets/eox_pid_seed.json
+python Database/auto_pop.py --limit-categories 1 --limit-series-eox 10 --limit-announcements 2
 ```
 
-Small test run:
+SQLite dev run:
 
 ```bash
-python Database/auto_pop.py --limit-categories 2
+python Database/auto_pop.py --sqlite --limit-categories 1
 ```
 
-Full EOX crawl:
-
-```bash
-python Database/auto_pop.py --crawl-eox
-```
-
-After the preset JSON is generated, start Cisco EOX Manager and click **Import bundled preset** in the GUI.
+The tool now saves directly to the configured database. It does not create or import JSON seed files.

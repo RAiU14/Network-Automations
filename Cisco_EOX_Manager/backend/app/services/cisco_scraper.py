@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,7 +15,7 @@ except ImportError:  # Optional at import time; requirements.txt includes langde
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from app.core.config import DEFAULT_EOX_DB_PATH, get_settings
+from app.core.config import get_settings
 from app.core.logging import get_logger
 
 logger = get_logger("eox.scraper")
@@ -31,7 +30,7 @@ class CiscoEoxScraperService:
 
     base_url: str | None = None
     timeout: int | None = None
-    db_path: Path = DEFAULT_EOX_DB_PATH
+    db_path: Path | None = None
     session: requests.Session = field(default_factory=requests.Session, init=False)
 
     def __post_init__(self) -> None:
@@ -637,17 +636,10 @@ class CiscoEoxScraperService:
     # Cache + PM report integration helpers
     # ------------------------------------------------------------------
     def load_cache(self) -> dict[str, Any]:
-        if not self.db_path.exists():
-            return {}
-        try:
-            return json.loads(self.db_path.read_text(encoding="utf-8"))
-        except Exception:
-            logger.warning("Ignoring unreadable EOX cache: %s", self.db_path)
-            return {}
+        return {}
 
     def save_cache(self, data: Mapping[str, Any]) -> None:
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.db_path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+        return None
 
     def request_eox_data_from_local_db(
         self,
@@ -657,9 +649,6 @@ class CiscoEoxScraperService:
         db_path: str | Path | None = None,
         update_cache: bool = True,
     ) -> dict[str, Any]:
-        if db_path:
-            self.db_path = Path(db_path)
-
         cache = self.load_cache()
         output: dict[str, Any] = {}
         missing: list[str] = []

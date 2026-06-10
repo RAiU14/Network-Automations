@@ -46,15 +46,6 @@ class Settings:
 
     cors_origins: list[str] = None  # type: ignore[assignment]
 
-    @property
-    def default_eox_db_path(self) -> Path:
-        # Legacy JSON cache location used only as a scraper compatibility fallback.
-        return self.data_dir / "legacy_eox_pid_cache.json"
-
-    @property
-    def preset_seed_path(self) -> Path:
-        return self.data_dir / "presets" / "eox_pid_seed.json"
-
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
@@ -76,5 +67,3 @@ def get_settings() -> Settings:
 
 
 SETTINGS = get_settings()
-DEFAULT_EOX_DB_PATH = SETTINGS.default_eox_db_path
-DEFAULT_PRESET_SEED_PATH = SETTINGS.preset_seed_path
