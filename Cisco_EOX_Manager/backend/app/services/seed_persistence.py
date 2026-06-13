@@ -244,6 +244,163 @@ def _record_raw_response(record: Mapping[str, Any]) -> dict[str, Any]:
     return {"record": dict(record), "payload": payload}
 
 
+def _strip_heavy_keys(value: Any) -> Any:
+    heavy = {"announcement_tables", "affected_product_row", "additional_announcements", "raw_milestones"}
+    if isinstance(value, Mapping):
+        return {str(key): _strip_heavy_keys(val) for key, val in value.items() if key not in heavy}
+    if isinstance(value, list):
+        return [_strip_heavy_keys(item) for item in value]
+    return value
+
+
+def _compact_text(value: Any, limit: int = 4000) -> Any:
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    text = _as_text(value)
+    return text if len(text) <= limit else f"{text[:limit]}... [trimmed {len(text) - limit} chars]"
+
+
+def _row_info_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    row = payload.get("affected_product_row")
+    return dict(row) if isinstance(row, Mapping) else {}
+
+
+def _row_columns(row_info: Mapping[str, Any]) -> dict[str, Any]:
+    columns = row_info.get("columns")
+    return dict(columns) if isinstance(columns, Mapping) else {}
+
+
+def _milestone_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    output: dict[str, Any] = {}
+    for field, aliases in FIELD_ALIASES.items():
+        if field == "pid":
+            continue
+        value = _payload_value(payload, aliases)
+        if value not in (None, "", [], {}):
+            output[aliases[0] if aliases else field] = _compact_text(value)
+    for key in ("PID", "ProductID", "EOLProductID", "ProductIDDescription", "Series", "EOXStatus", "AnnouncementName", "AnnouncementTitle", "source", "scrape_mode"):
+        value = payload.get(key)
+        if value not in (None, "", [], {}):
+            output[key] = _compact_text(value)
+    return output
+
+
+def _compact_product_payload(*, pid: str, technology: str, payload: Mapping[str, Any], record: Mapping[str, Any], source: str) -> dict[str, Any]:
+    row_info = _row_info_from_payload(payload)
+    output = _milestone_payload(payload)
+    output.update(
+        {
+            "PID": pid,
+            "ProductID": pid,
+            "EOLProductID": pid,
+            "technology": technology,
+            "source": source,
+            "scrape_mode": _as_text(payload.get("scrape_mode")) or None,
+            "announcement_url": _as_text(record.get("announcement_url") or _payload_value(payload, FIELD_ALIASES["eox_announcement_url"])) or None,
+            "announcement_name": _as_text(record.get("announcement_name") or payload.get("AnnouncementName")) or None,
+            "table_index": row_info.get("table_index"),
+            "row_index": row_info.get("row_index"),
+        }
+    )
+    return {key: value for key, value in output.items() if value not in (None, "", [], {})}
+
+
+def _compact_product_raw_response(record: Mapping[str, Any], payload: Mapping[str, Any], source: str) -> dict[str, Any]:
+    raw_response = record.get("raw_response") if isinstance(record.get("raw_response"), Mapping) else {}
+    birth_certificate = raw_response.get("birth_certificate") if isinstance(raw_response.get("birth_certificate"), Mapping) else {}
+    series_record = raw_response.get("series_record") if isinstance(raw_response.get("series_record"), Mapping) else {}
+    output = {
+        "source": source,
+        "scrape_mode": _as_text(payload.get("scrape_mode")) or None,
+        "announcement_url": _as_text(record.get("announcement_url") or _payload_value(payload, FIELD_ALIASES["eox_announcement_url"])) or None,
+        "series_url": _as_text(record.get("series_url") or payload.get("SeriesURL")) or None,
+        "birth_certificate": _strip_heavy_keys(birth_certificate),
+        "series_record": _strip_heavy_keys(series_record),
+        "record_hash": content_hash(_strip_heavy_keys(_milestone_payload(payload))),
+    }
+    return {key: value for key, value in output.items() if value not in (None, "", [], {})}
+
+
+def _compact_announcement_payload(record: Mapping[str, Any], payload: Mapping[str, Any], technology: str) -> dict[str, Any]:
+    tables = payload.get("announcement_tables") if isinstance(payload.get("announcement_tables"), list) else []
+    output = {
+        "announcement_name": record.get("announcement_name") or payload.get("AnnouncementName"),
+        "announcement_title": payload.get("AnnouncementTitle"),
+        "product_bulletin_url": record.get("product_bulletin_url") or _payload_value(payload, FIELD_ALIASES["product_bulletin_url"]),
+        "technology": technology,
+        "series": record.get("series") or payload.get("Series"),
+        "series_url": record.get("series_url") or payload.get("SeriesURL"),
+        "table_count": len(tables),
+        "scrape_mode": payload.get("scrape_mode"),
+    }
+    return {key: _compact_text(value) for key, value in output.items() if value not in (None, "", [], {})}
+
+
+def _compact_announcement_raw_response(record: Mapping[str, Any], payload: Mapping[str, Any]) -> dict[str, Any]:
+    raw_response = record.get("raw_response") if isinstance(record.get("raw_response"), Mapping) else {}
+    announcement = raw_response.get("announcement") if isinstance(raw_response.get("announcement"), Mapping) else {}
+    output = {
+        "title": announcement.get("title") or payload.get("AnnouncementTitle"),
+        "announcement_url": record.get("announcement_url") or _payload_value(payload, FIELD_ALIASES["eox_announcement_url"]),
+        "table_count": len(payload.get("announcement_tables") or []) if isinstance(payload.get("announcement_tables"), list) else 0,
+        "source_hash": content_hash(_strip_heavy_keys(announcement or payload)),
+    }
+    return {key: _compact_text(value) for key, value in output.items() if value not in (None, "", [], {})}
+
+
+def _compact_table_raw(table: Mapping[str, Any], row_count: int, header_count: int) -> dict[str, Any]:
+    output = {
+        "table_index": table.get("table_index"),
+        "heading": table.get("heading"),
+        "caption": table.get("caption"),
+        "row_count": row_count,
+        "header_count": header_count,
+        "content_hash": content_hash({"headers": table.get("headers") or [], "rows": table.get("rows") or []}),
+    }
+    for key in ("source_url", "announcement_url"):
+        if table.get(key):
+            output[key] = table.get(key)
+    return {str(key): _compact_text(value) for key, value in output.items() if value not in (None, "", [], {})}
+
+
+def _compact_table_rows(table: Mapping[str, Any]) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for index, row in enumerate(table.get("rows") or []):
+        if not isinstance(row, Mapping):
+            continue
+        clean = {
+            "row_index": row.get("row_index", index),
+            "columns": dict(row.get("columns") or {}) if isinstance(row.get("columns"), Mapping) else {},
+        }
+        cells = row.get("cells")
+        if isinstance(cells, list):
+            clean["cells"] = [_compact_text(item, limit=2000) for item in cells]
+        links = row.get("links")
+        if isinstance(links, list) and links:
+            clean["links"] = links
+        output.append(clean)
+    return output
+
+
+def _compact_affected_payload(record: Mapping[str, Any], payload: Mapping[str, Any], row_info: Mapping[str, Any]) -> dict[str, Any]:
+    milestones = _milestone_payload(payload)
+    columns = _row_columns(row_info)
+    return {
+        "columns": columns,
+        "affected_product_row": {
+            "table_index": row_info.get("table_index"),
+            "row_index": row_info.get("row_index"),
+            "table_caption": row_info.get("table_caption"),
+            "table_heading": row_info.get("table_heading"),
+            "columns": columns,
+            "pid_headers": list(row_info.get("pid_headers") or []),
+        },
+        "milestones": milestones,
+        "announcement_url": record.get("announcement_url") or _payload_value(payload, FIELD_ALIASES["eox_announcement_url"]),
+        "announcement_name": record.get("announcement_name") or payload.get("AnnouncementName"),
+        "product_bulletin_url": record.get("product_bulletin_url") or _payload_value(payload, FIELD_ALIASES["product_bulletin_url"]),
+    }
+
 def _iter_catalog_entries(data: Any) -> Iterable[Mapping[str, Any]]:
     if isinstance(data, Mapping):
         entries = data.get("pid_catalog")
@@ -293,6 +450,29 @@ class SeedPersistenceService:
     def __init__(self, db: Session):
         self.db = db
 
+    def _pending_catalog_entry(self, normalized: str, technology: str) -> PidCatalog | None:
+        collections = [list(self.db.new), list(self.db.dirty), list(self.db.identity_map.values())]
+        for collection in collections:
+            for obj in collection:
+                if (
+                    isinstance(obj, PidCatalog)
+                    and obj.normalized_pid == normalized
+                    and obj.technology == technology
+                ):
+                    return obj
+        return None
+
+    def _catalog_entry(self, normalized: str, technology: str) -> PidCatalog | None:
+        pending = self._pending_catalog_entry(normalized, technology)
+        if pending is not None:
+            return pending
+        with self.db.no_autoflush:
+            return (
+                self.db.query(PidCatalog)
+                .filter(PidCatalog.normalized_pid == normalized, PidCatalog.technology == technology)
+                .one_or_none()
+            )
+
     def save_seed(
         self,
         data: Mapping[str, Any] | list[Any],
@@ -316,7 +496,8 @@ class SeedPersistenceService:
         try:
             for item in _iter_catalog_entries(data):
                 try:
-                    changed = self.save_catalog_entry(item, overwrite=overwrite)
+                    with self.db.begin_nested():
+                        changed = self.save_catalog_entry(item, overwrite=overwrite)
                     if changed == "inserted":
                         result.catalog_inserted += 1
                     elif changed == "updated":
@@ -330,7 +511,11 @@ class SeedPersistenceService:
 
             for record in _iter_eox_records(data):
                 try:
-                    changed = self.save_eox_record(record, overwrite=overwrite)
+                    self._last_announcement_change = "skipped"
+                    self._last_table_result = {"inserted": 0, "updated": 0}
+                    self._last_affected_result = {"inserted": 0, "updated": 0}
+                    with self.db.begin_nested():
+                        changed = self.save_eox_record(record, overwrite=overwrite)
                     announcement_change = getattr(self, "_last_announcement_change", "skipped")
                     table_result = getattr(self, "_last_table_result", {"inserted": 0, "updated": 0})
                     affected_result = getattr(self, "_last_affected_result", {"inserted": 0, "updated": 0})
@@ -360,10 +545,12 @@ class SeedPersistenceService:
                 self.db.commit()
             return result
         except Exception:
+            self.db.rollback()
             run.status = "failed"
             run.finished_at = _now()
             run.stats = result.as_dict()
             if commit:
+                self.db.add(run)
                 self.db.commit()
             raise
 
@@ -373,11 +560,7 @@ class SeedPersistenceService:
             return "skipped"
         technology = _as_text(item.get("technology") or item.get("category_name") or "Imported") or "Imported"
         normalized = normalize_pid(pid)
-        entry = (
-            self.db.query(PidCatalog)
-            .filter(PidCatalog.normalized_pid == normalized, PidCatalog.technology == technology)
-            .one_or_none()
-        )
+        entry = self._catalog_entry(normalized, technology)
         created = False
         if entry is None:
             entry = PidCatalog(pid=pid, normalized_pid=normalized, technology=technology)
@@ -484,21 +667,24 @@ class SeedPersistenceService:
             self.db.add(product)
             created = True
 
-        raw_response = _record_raw_response(record)
+        compact_payload = _compact_product_payload(pid=pid, technology=technology, payload=payload, record=record, source=source)
+        compact_raw = _compact_product_raw_response(record, payload, source)
         existing_payload = product.payload or {}
         existing_raw = product.raw_response or {}
-        merged_payload = _merge_dict(existing_payload, payload, overwrite=overwrite or _is_better_source(source, product.source))
-        merged_raw = _merge_dict(existing_raw, raw_response, overwrite=overwrite)
+        merged_payload = _merge_dict(existing_payload, compact_payload, overwrite=overwrite or _is_better_source(source, product.source))
+        merged_raw = _merge_dict(existing_raw, compact_raw, overwrite=overwrite)
         imports = list(merged_raw.get("seed_imports") or [])
         import_marker = {
             "source": source,
             "announcement_url": record.get("announcement_url") or _payload_value(payload, FIELD_ALIASES["eox_announcement_url"]),
-            "content_hash": content_hash(payload),
+            "content_hash": content_hash(compact_payload),
             "seen_at": _now().isoformat(),
         }
-        if stable_json(import_marker) not in {stable_json(item) for item in imports}:
+        import_marker_key = stable_json({k: v for k, v in import_marker.items() if k != "seen_at"})
+        existing_markers = {stable_json({k: v for k, v in item.items() if k != "seen_at"}) for item in imports if isinstance(item, Mapping)}
+        if import_marker_key not in existing_markers:
             imports.append(import_marker)
-        merged_raw["seed_imports"] = imports[-20:]
+        merged_raw["seed_imports"] = imports[-10:]
 
         changed = created
 
@@ -562,15 +748,7 @@ class SeedPersistenceService:
             self.db.add(announcement)
             created = True
         previous_hash = announcement.content_hash
-        announcement_payload = {
-            "announcement_name": record.get("announcement_name") or payload.get("AnnouncementName"),
-            "announcement_title": payload.get("AnnouncementTitle"),
-            "product_bulletin_url": record.get("product_bulletin_url") or _payload_value(payload, FIELD_ALIASES["product_bulletin_url"]),
-            "technology": technology,
-            "series": record.get("series") or payload.get("Series"),
-            "series_url": record.get("series_url") or payload.get("SeriesURL"),
-            "tables": payload.get("announcement_tables") or [],
-        }
+        announcement_payload = _compact_announcement_payload(record, payload, technology)
         announcement.announcement_name = _as_text(announcement_payload.get("announcement_name")) or announcement.announcement_name
         announcement.title = _as_text(announcement_payload.get("announcement_title")) or announcement.title
         announcement.product_bulletin_url = _as_text(announcement_payload.get("product_bulletin_url")) or announcement.product_bulletin_url
@@ -579,8 +757,8 @@ class SeedPersistenceService:
         announcement.series_url = _as_text(announcement_payload.get("series_url")) or announcement.series_url
         announcement.source = source or announcement.source
         announcement.payload = _merge_dict(announcement.payload or {}, announcement_payload, overwrite=True)
-        announcement.raw_response = _merge_dict(announcement.raw_response or {}, _record_raw_response(record), overwrite=True)
-        new_hash = content_hash(announcement.payload)
+        announcement.raw_response = _merge_dict(announcement.raw_response or {}, _compact_announcement_raw_response(record, payload), overwrite=True)
+        new_hash = content_hash({"payload": announcement.payload, "raw": announcement.raw_response})
         announcement.content_hash = new_hash
         announcement.last_seen_at = _now()
         self._last_announcement_change = "inserted" if created else "updated" if previous_hash != new_hash else "skipped"
@@ -604,13 +782,15 @@ class SeedPersistenceService:
                 existing = EoxAnnouncementTable(announcement_id=announcement.id, table_index=table_index)
                 self.db.add(existing)
                 created = True
-            raw_table = dict(table)
-            new_hash = content_hash(raw_table)
+            headers = list(table.get("headers") or [])
+            rows = _compact_table_rows(table)
+            raw_table = _compact_table_raw(table, row_count=len(rows), header_count=len(headers))
+            new_hash = content_hash({"headers": headers, "rows": rows, "raw_table": raw_table})
             changed = created or existing.content_hash != new_hash
             existing.heading = _as_text(table.get("heading")) or None
             existing.caption = _as_text(table.get("caption")) or None
-            existing.headers = list(table.get("headers") or [])
-            existing.rows = list(table.get("rows") or [])
+            existing.headers = headers
+            existing.rows = rows
             existing.raw_table = raw_table
             existing.content_hash = new_hash
             existing.last_seen_at = _now()
@@ -630,14 +810,15 @@ class SeedPersistenceService:
         technology: str,
     ) -> dict[str, int]:
         counts = {"inserted": 0, "updated": 0}
-        row_info = payload.get("affected_product_row") if isinstance(payload.get("affected_product_row"), Mapping) else None
+        row_info = _row_info_from_payload(payload)
         if not row_info:
             return counts
         pid = product.pid
         normalized = product.normalized_pid
         table_index = int(row_info.get("table_index") or 0)
         row_index = int(row_info.get("row_index") or 0)
-        row_hash = content_hash(row_info)
+        compact_payload = _compact_affected_payload(record, payload, row_info)
+        row_hash = content_hash(compact_payload)
         existing = (
             self.db.query(EoxAffectedProduct)
             .filter(
@@ -668,8 +849,14 @@ class SeedPersistenceService:
         existing.product_description = _as_text(record.get("product_name") or _payload_value(payload, FIELD_ALIASES["product_name"])) or None
         existing.source = source
         existing.row_hash = row_hash
-        existing.payload = dict(payload)
-        existing.raw_response = {"affected_product_row": dict(row_info)}
+        existing.payload = compact_payload
+        existing.raw_response = {
+            "table_index": table_index,
+            "row_index": row_index,
+            "cells": list(row_info.get("cells") or []),
+            "pid_headers": list(row_info.get("pid_headers") or []),
+            "table_headers": list(row_info.get("table_headers") or []),
+        }
         existing.last_seen_at = _now()
         if created:
             counts["inserted"] += 1

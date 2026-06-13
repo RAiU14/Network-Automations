@@ -13,7 +13,6 @@ class PidCatalog(Base):
     __tablename__ = "pid_catalog"
     __table_args__ = (
         UniqueConstraint("normalized_pid", "technology", name="uq_pid_catalog_norm_technology"),
-        Index("ix_pid_catalog_payload_gin", "payload", postgresql_using="gin"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -36,8 +35,8 @@ class ProductEox(Base):
     __tablename__ = "product_eox"
     __table_args__ = (
         UniqueConstraint("normalized_pid", name="uq_product_eox_normalized_pid"),
-        Index("ix_product_eox_payload_gin", "payload", postgresql_using="gin"),
-        Index("ix_product_eox_raw_gin", "raw_response", postgresql_using="gin"),
+        Index("ix_product_eox_status_updated", "status", "updated_at"),
+        Index("ix_product_eox_technology_status", "technology", "status"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -77,7 +76,7 @@ class ProductEox(Base):
 class LookupHistory(Base):
     __tablename__ = "lookup_history"
     __table_args__ = (
-        Index("ix_lookup_history_snapshot_gin", "response_snapshot", postgresql_using="gin"),
+        Index("ix_lookup_history_pid_created", "normalized_pid", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -108,7 +107,7 @@ class AppSetting(Base):
 class SystemEvent(Base):
     __tablename__ = "system_events"
     __table_args__ = (
-        Index("ix_system_events_payload_gin", "payload", postgresql_using="gin"),
+        Index("ix_system_events_type_created", "event_type", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -123,7 +122,7 @@ class SystemEvent(Base):
 class SeedRun(Base):
     __tablename__ = "seed_runs"
     __table_args__ = (
-        Index("ix_seed_runs_stats_gin", "stats", postgresql_using="gin"),
+        Index("ix_seed_runs_status_started", "status", "started_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -144,7 +143,7 @@ class AutoPopCheckpoint(Base):
     __tablename__ = "auto_pop_checkpoints"
     __table_args__ = (
         UniqueConstraint("scope", "scope_key", name="uq_auto_pop_checkpoint_scope_key"),
-        Index("ix_auto_pop_checkpoint_stats_gin", "stats", postgresql_using="gin"),
+        Index("ix_auto_pop_checkpoint_status_next", "status", "next_allowed_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -169,8 +168,7 @@ class AutoPopCheckpoint(Base):
 class EoxAnnouncement(Base):
     __tablename__ = "eox_announcements"
     __table_args__ = (
-        Index("ix_eox_ann_payload_gin", "payload", postgresql_using="gin"),
-        Index("ix_eox_ann_raw_gin", "raw_response", postgresql_using="gin"),
+        Index("ix_eox_ann_technology_updated", "technology", "updated_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -198,9 +196,7 @@ class EoxAnnouncementTable(Base):
     __tablename__ = "eox_announcement_tables"
     __table_args__ = (
         UniqueConstraint("announcement_id", "table_index", name="uq_eox_announcement_table_index"),
-        Index("ix_eox_table_headers_gin", "headers", postgresql_using="gin"),
-        Index("ix_eox_table_rows_gin", "rows", postgresql_using="gin"),
-        Index("ix_eox_table_raw_gin", "raw_table", postgresql_using="gin"),
+        Index("ix_eox_table_announcement_index", "announcement_id", "table_index"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -224,8 +220,8 @@ class EoxAffectedProduct(Base):
     __tablename__ = "eox_affected_products"
     __table_args__ = (
         UniqueConstraint("announcement_id", "normalized_pid", "table_index", "row_index", name="uq_eox_affected_pid_row"),
-        Index("ix_eox_affected_payload_gin", "payload", postgresql_using="gin"),
-        Index("ix_eox_affected_raw_gin", "raw_response", postgresql_using="gin"),
+        Index("ix_eox_affected_norm_updated", "normalized_pid", "updated_at"),
+        Index("ix_eox_affected_announcement_pid", "announcement_id", "normalized_pid"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -253,8 +249,7 @@ class EoxAffectedProduct(Base):
 class AutoPopJob(Base):
     __tablename__ = "auto_pop_jobs"
     __table_args__ = (
-        Index("ix_auto_pop_jobs_params_gin", "parameters", postgresql_using="gin"),
-        Index("ix_auto_pop_jobs_stats_gin", "stats", postgresql_using="gin"),
+        Index("ix_auto_pop_jobs_status_created", "status", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -276,7 +271,7 @@ class AutoPopJob(Base):
 class ExportJob(Base):
     __tablename__ = "export_jobs"
     __table_args__ = (
-        Index("ix_export_jobs_params_gin", "parameters", postgresql_using="gin"),
+        Index("ix_export_jobs_dataset_created", "dataset", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)

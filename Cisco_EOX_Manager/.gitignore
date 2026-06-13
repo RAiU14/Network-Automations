@@ -6,3 +6,9 @@ front_end/node_modules/
 front_end/dist/
 data/.eox_secret.key
 logs/
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+data/.env.local
+data/.eox_runtime.env

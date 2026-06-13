@@ -37,7 +37,8 @@ class CiscoEoxScraperService:
         settings = get_settings()
         self.base_url = (self.base_url or settings.cisco_base_url).rstrip("/")
         self.timeout = self.timeout or settings.http_timeout_seconds
-        self.db_path = Path(self.db_path)
+        raw_db_path = self.db_path or (settings.data_dir / "eox_scraper_cache.json")
+        self.db_path = Path(raw_db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         retry = Retry(

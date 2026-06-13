@@ -209,6 +209,7 @@ class DatabaseOverviewType:
     total_export_jobs: int
 
 
+@strawberry.type
 class ProductEvidenceType:
     product: Optional[EoxProductType]
     affected_products: list[EoxAffectedProductType]

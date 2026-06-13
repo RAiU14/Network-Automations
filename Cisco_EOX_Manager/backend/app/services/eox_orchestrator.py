@@ -3,16 +3,18 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
-from app.db.models import LookupHistory, PidCatalog, ProductEox
+from app.db.models import AutoPopJob, EoxAffectedProduct, EoxAnnouncement, EoxAnnouncementTable, LookupHistory, PidCatalog, ProductEox
 from app.schemas import (
     AutoPopulateResponse,
     CacheSearchResponse,
     CacheStatsResponse,
     CatalogDiscoveryResponse,
+    EoxEvidenceResponse,
     EoxProductOut,
     LookupResponse,
     PidCatalogOut,
@@ -95,6 +97,84 @@ def _status_from_payload(payload: Any, source: str) -> str:
             return "error"
     return "unknown" if source in {"cache", "seed"} else "not_found"
 
+
+def _slim_lookup_payload(pid: str, technology: str, payload: Any, source: str) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        return {"PID": pid, "technology": technology, "source": source, "message": str(payload)}
+    output: dict[str, Any] = {"PID": pid, "ProductID": pid, "EOLProductID": pid, "technology": technology, "source": source}
+    for key in (
+        "ProductIDDescription",
+        "ProductDescription",
+        "Product Name",
+        "Series",
+        "End-of-Sale Date",
+        "End-of-Sale Date: HW",
+        "Last Date of Support",
+        "Last Date of Support: HW",
+        "End of SW Maintenance Releases Date",
+        "End of SW Maintenance Releases Date: HW",
+        "End of Vulnerability/Security Support",
+        "End of Vulnerability/Security Support: HW",
+        "End of Routine Failure Analysis Date",
+        "End of Routine Failure Analysis Date:  HW",
+        "EOXAnnouncementURL",
+        "AnnouncementURL",
+        "url",
+        "ProductBulletinURL",
+        "LinkToProductBulletinURL",
+    ):
+        value = payload.get(key)
+        if value not in (None, "", [], {}):
+            output[key] = value.get("value") if isinstance(value, Mapping) else value
+    return output
+
+
+def _slim_raw_payload(payload: Any, source: str) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        return {"source": source, "message": str(payload)[:4000]}
+    return {
+        "source": source,
+        "keys": sorted(str(key) for key in payload.keys())[:100],
+        "eox_announcement_url": _payload_value(payload, FIELD_ALIASES["eox_announcement_url"]),
+        "product_bulletin_url": _payload_value(payload, FIELD_ALIASES["product_bulletin_url"]),
+    }
+
+
+def _row_columns(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        return {}
+    if isinstance(payload.get("columns"), Mapping):
+        return dict(payload["columns"])
+    row = payload.get("affected_product_row")
+    if isinstance(row, Mapping) and isinstance(row.get("columns"), Mapping):
+        return dict(row["columns"])
+    return {}
+
+
+def _product_dict(product: ProductEox | None) -> dict[str, Any] | None:
+    if product is None:
+        return None
+    return {
+        "pid": product.pid,
+        "normalized_pid": product.normalized_pid,
+        "technology": product.technology,
+        "status": product.status,
+        "source": product.source,
+        "product_name": product.product_name,
+        "series": product.series,
+        "end_of_sale_date": product.end_of_sale_date,
+        "last_date_of_support": product.last_date_of_support,
+        "end_of_sw_maintenance": product.end_of_sw_maintenance,
+        "end_of_security_support": product.end_of_security_support,
+        "end_of_routine_failure_analysis": product.end_of_routine_failure_analysis,
+        "eox_announcement_url": product.eox_announcement_url,
+        "product_bulletin_url": product.product_bulletin_url,
+        "lookup_count": product.lookup_count or 0,
+        "last_lookup_at": product.last_lookup_at.isoformat() if hasattr(product.last_lookup_at, "isoformat") else None,
+        "last_scraped_at": product.last_scraped_at.isoformat() if hasattr(product.last_scraped_at, "isoformat") else None,
+        "updated_at": product.updated_at.isoformat() if hasattr(product.updated_at, "isoformat") else None,
+        "payload": product.payload or {},
+    }
 
 def product_to_out(product: ProductEox) -> EoxProductOut:
     return EoxProductOut(
@@ -201,8 +281,8 @@ class EoxOrchestrator:
         status: str | None = None,
     ) -> ProductEox:
         normalized = normalize_pid(pid)
-        payload_dict = payload if isinstance(payload, Mapping) else {"message": payload}
-        raw_dict = raw_response if isinstance(raw_response, Mapping) else {"raw": raw_response if raw_response is not None else payload}
+        payload_dict = _slim_lookup_payload(pid, technology, payload, source)
+        raw_dict = _slim_raw_payload(raw_response if raw_response is not None else payload, source)
         status = status or _status_from_payload(payload, source)
 
         product = self._get_product(pid)
@@ -334,7 +414,14 @@ class EoxOrchestrator:
 
         ordered = [results_by_norm.get(normalize_pid(pid)) for pid in clean_pids]
         final_results = [item for item in ordered if item is not None]
-        self.db.commit()
+        try:
+            self.db.commit()
+        except OperationalError as exc:
+            logger.warning("Lookup result returned without saving lookup metadata because the database was busy: %s", exc)
+            self.db.rollback()
+        except SQLAlchemyError as exc:
+            logger.warning("Lookup result returned without saving lookup metadata: %s", exc)
+            self.db.rollback()
         summary = {
             "total": len(final_results),
             "cache_hits": sum(1 for item in final_results if item.source_used == "cache"),
@@ -527,6 +614,10 @@ class EoxOrchestrator:
     def get_stats(self) -> CacheStatsResponse:
         total = self.db.query(func.count(ProductEox.id)).scalar() or 0
         total_catalog = self.db.query(func.count(PidCatalog.id)).scalar() or 0
+        total_announcements = self.db.query(func.count(EoxAnnouncement.id)).scalar() or 0
+        total_tables = self.db.query(func.count(EoxAnnouncementTable.id)).scalar() or 0
+        total_affected = self.db.query(func.count(EoxAffectedProduct.id)).scalar() or 0
+        total_jobs = self.db.query(func.count(AutoPopJob.id)).scalar() or 0
         by_status = dict(self.db.query(ProductEox.status, func.count(ProductEox.id)).group_by(ProductEox.status).all())
         by_source = dict(self.db.query(ProductEox.source, func.count(ProductEox.id)).group_by(ProductEox.source).all())
         by_catalog_source = dict(self.db.query(PidCatalog.source, func.count(PidCatalog.id)).group_by(PidCatalog.source).all())
@@ -535,10 +626,116 @@ class EoxOrchestrator:
         return CacheStatsResponse(
             total_products=int(total),
             total_pid_catalog=int(total_catalog),
+            total_announcements=int(total_announcements),
+            total_announcement_tables=int(total_tables),
+            total_affected_products=int(total_affected),
+            total_autopop_jobs=int(total_jobs),
             by_status={str(key): int(value) for key, value in by_status.items()},
             by_source={str(key): int(value) for key, value in by_source.items()},
             by_catalog_source={str(key): int(value) for key, value in by_catalog_source.items()},
             recent_lookups=int(recent),
+        )
+
+    def get_product_evidence(self, pid: str, *, table_limit: int = 20, row_limit: int = 500) -> EoxEvidenceResponse:
+        normalized = normalize_pid(pid)
+        product = self.db.query(ProductEox).filter(ProductEox.normalized_pid == normalized).one_or_none()
+        affected = (
+            self.db.query(EoxAffectedProduct)
+            .filter(EoxAffectedProduct.normalized_pid == normalized)
+            .order_by(EoxAffectedProduct.updated_at.desc())
+            .limit(200)
+            .all()
+        )
+        if product and product.id:
+            seen_ids = {item.id for item in affected}
+            extra = (
+                self.db.query(EoxAffectedProduct)
+                .filter(EoxAffectedProduct.product_id == product.id)
+                .order_by(EoxAffectedProduct.updated_at.desc())
+                .limit(200)
+                .all()
+            )
+            affected.extend(item for item in extra if item.id not in seen_ids)
+        announcement_ids = sorted({item.announcement_id for item in affected if item.announcement_id})
+        if not announcement_ids and product and product.eox_announcement_url:
+            announcement = self.db.query(EoxAnnouncement).filter(EoxAnnouncement.announcement_url == product.eox_announcement_url).one_or_none()
+            if announcement:
+                announcement_ids = [announcement.id]
+        announcements = (
+            self.db.query(EoxAnnouncement)
+            .filter(EoxAnnouncement.id.in_(announcement_ids))
+            .order_by(EoxAnnouncement.updated_at.desc())
+            .all()
+            if announcement_ids
+            else []
+        )
+        tables = (
+            self.db.query(EoxAnnouncementTable)
+            .filter(EoxAnnouncementTable.announcement_id.in_(announcement_ids))
+            .order_by(EoxAnnouncementTable.announcement_id.asc(), EoxAnnouncementTable.table_index.asc())
+            .limit(max(1, min(table_limit, 100)))
+            .all()
+            if announcement_ids
+            else []
+        )
+        affected_payload = []
+        for item in affected:
+            affected_payload.append(
+                {
+                    "id": item.id,
+                    "announcement_id": item.announcement_id,
+                    "product_id": item.product_id,
+                    "pid": item.pid,
+                    "normalized_pid": item.normalized_pid,
+                    "technology": item.technology,
+                    "product_description": item.product_description,
+                    "source": item.source,
+                    "table_index": item.table_index,
+                    "row_index": item.row_index,
+                    "columns": _row_columns(item.payload or {}),
+                    "milestones": (item.payload or {}).get("milestones", {}),
+                    "updated_at": item.updated_at.isoformat() if hasattr(item.updated_at, "isoformat") else None,
+                }
+            )
+        announcement_payload = []
+        for item in announcements:
+            announcement_payload.append(
+                {
+                    "id": item.id,
+                    "announcement_url": item.announcement_url,
+                    "announcement_name": item.announcement_name,
+                    "title": item.title,
+                    "product_bulletin_url": item.product_bulletin_url,
+                    "technology": item.technology,
+                    "series": item.series,
+                    "series_url": item.series_url,
+                    "source": item.source,
+                    "updated_at": item.updated_at.isoformat() if hasattr(item.updated_at, "isoformat") else None,
+                }
+            )
+        table_payload = []
+        bounded_row_limit = max(1, min(row_limit, 5000))
+        for item in tables:
+            rows = item.rows or []
+            table_payload.append(
+                {
+                    "id": item.id,
+                    "announcement_id": item.announcement_id,
+                    "table_index": item.table_index,
+                    "heading": item.heading,
+                    "caption": item.caption,
+                    "headers": item.headers or [],
+                    "rows": rows[:bounded_row_limit],
+                    "row_count": len(rows),
+                    "truncated": len(rows) > bounded_row_limit,
+                    "updated_at": item.updated_at.isoformat() if hasattr(item.updated_at, "isoformat") else None,
+                }
+            )
+        return EoxEvidenceResponse(
+            product=_product_dict(product),
+            affected_products=affected_payload,
+            announcements=announcement_payload,
+            tables=table_payload,
         )
 
     def discover_catalog(

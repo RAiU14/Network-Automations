@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { apiRequest, downloadExport, getExportOptions, graphqlRequest, logFrontendEvent, parsePids } from './api.js';
+import { API_BASE_URL, apiRequest, downloadExport, getExportOptions, getProductEvidence, graphqlRequest, logFrontendEvent, parsePids } from './api.js';
 
 const samplePids = ['AIR-CT5520-K9', 'C9300-24T'];
 const datasets = ['eox_report', 'products', 'affected_products', 'announcements', 'pid_catalog', 'checkpoints', 'system_events'];
@@ -8,7 +8,7 @@ const graphQueries = {
   overview: `query Overview { databaseOverview { totalProducts totalCatalogEntries totalAnnouncements totalAnnouncementTables totalAffectedProducts totalSeedRuns totalCheckpoints totalSystemEvents totalAutopopJobs totalExportJobs } }`,
   eox_report: `query Products($search: String, $limit: Int!) { products(search: $search, limit: $limit) { pid technology status productName series endOfSaleDate endOfSwMaintenance endOfSecuritySupport lastDateOfSupport eoxAnnouncementUrl updatedAt } }`,
   products: `query Products($search: String, $limit: Int!) { products(search: $search, limit: $limit) { pid normalizedPid technology status source productName series endOfSaleDate lastDateOfSupport eoxAnnouncementUrl updatedAt } }`,
-  affected_products: `query Affected($search: String, $limit: Int!) { affectedProducts(search: $search, limit: $limit) { id pid normalizedPid technology productDescription announcementId productId tableIndex rowIndex source updatedAt payload rawResponse } }`,
+  affected_products: `query Affected($search: String, $limit: Int!) { affected_products(search: $search, limit: $limit) { id pid normalizedPid technology productDescription announcementId productId tableIndex rowIndex source updatedAt payload rawResponse } }`,
   announcements: `query Announcements($search: String, $limit: Int!) { announcements(search: $search, limit: $limit) { id announcementName title technology series announcementUrl productBulletinUrl source updatedAt } }`,
   pid_catalog: `query Catalog($search: String, $limit: Int!) { pidCatalog(search: $search, limit: $limit) { pid normalizedPid technology categoryName productName productUrl isEox source updatedAt } }`,
   checkpoints: `query Checkpoints($limit: Int!) { autoPopCheckpoints(limit: $limit) { id scope scopeKey status lastStartedAt lastCompletedAt lastSuccessAt nextAllowedAt runCount skipCount catalogRecords eoxRecords announcementsSeen lastError updatedAt } }`,
@@ -16,6 +16,42 @@ const graphQueries = {
   jobs: `query Jobs($limit: Int!) { autoPopJobs(limit: $limit) { id status processId returnCode logFile lastError createdAt startedAt finishedAt parameters stats } }`,
   productEvidence: `query ProductEvidence($pid: String!) { productEvidence(pid: $pid) { product { pid normalizedPid technology status source productName series endOfSaleDate lastDateOfSupport endOfSwMaintenance endOfSecuritySupport endOfRoutineFailureAnalysis eoxAnnouncementUrl productBulletinUrl updatedAt payload rawResponse } affectedProducts { id pid normalizedPid technology productDescription announcementId productId tableIndex rowIndex source updatedAt payload rawResponse } announcements { id announcementName title technology series announcementUrl productBulletinUrl source updatedAt } tables { id announcementId tableIndex heading caption headers rows rawTable updatedAt } } }`
 };
+
+const MAX_GUI_CATEGORIES = 100;
+const MAX_GUI_WORKERS = 8;
+const DEFAULT_AUTOPOP_OPTIONS = {
+  limit_categories: 100,
+  limit_series_eox: 2000,
+  limit_announcements: 500,
+  parse_workers: 4,
+  delay: 5,
+  category_break: 60,
+  force_refresh: false,
+  allow_empty: true
+};
+
+const explorerDatasets = [
+  { key: 'products', label: 'Products', path: '/api/eox/cache', itemKey: 'items', searchable: true },
+  { key: 'pid_catalog', label: 'PID catalog', path: '/api/eox/pid-catalog', itemKey: 'items', searchable: true },
+  { key: 'autopop_jobs', label: 'Auto_Pop jobs', path: '/api/autopop/jobs', itemKey: 'items', searchable: false },
+  { key: 'system_events', label: 'System events', path: '/api/logs/events', itemKey: null, searchable: false }
+];
+
+function clampNumber(value, min, max, fallback = min) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function asText(value, fallback = '') {
+  if (value === null || value === undefined || value === '') return fallback;
+  if (value instanceof Error) return value.message || fallback;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') {
+    try { return JSON.stringify(value); } catch (_error) { return fallback || 'Unexpected error'; }
+  }
+  return String(value);
+}
 
 function nvl(value) {
   if (value === null || value === undefined || value === '') return 'N/A';
@@ -47,8 +83,16 @@ function useAppStatus() {
 
   async function refreshStats() {
     try {
-      const data = await graphqlRequest(graphQueries.overview);
-      setStats(data?.data?.databaseOverview || null);
+      const restStats = await apiRequest('/api/eox/stats');
+      const jobData = await apiRequest('/api/autopop/jobs?limit=1').catch(() => ({ total: 0 }));
+      setStats({
+        totalProducts: restStats?.total_products ?? 0,
+        totalCatalogEntries: restStats?.total_pid_catalog ?? 0,
+        totalAnnouncements: restStats?.total_announcements ?? 0,
+        totalAnnouncementTables: restStats?.total_announcement_tables ?? 0,
+        totalAffectedProducts: restStats?.total_affected_products ?? 0,
+        totalAutopopJobs: jobData?.total ?? 0
+      });
     } catch (_error) {
       setStats(null);
     }
@@ -107,7 +151,7 @@ function DatabaseSetupCard({ setup, refreshSetup, refreshStats, notify, setError
   }
 
   return (
-    <section className="panel setup-card">
+    <section id="setup" className="panel setup-card">
       <div className="panel-heading">
         <div>
           <p className="eyebrow">Step 1</p>
@@ -176,7 +220,7 @@ function OptionalApiCard({ setup, refreshSetup, notify, setError, setLoading }) 
   }
 
   return (
-    <section className="panel slim-panel">
+    <section className="panel slim-panel api-panel">
       <div className="panel-heading">
         <div><p className="eyebrow">Optional</p><h2>Cisco API setup</h2><p className="muted">Leave this empty for now. The lookup engine will use it automatically later only when credentials exist.</p></div>
         <StatusPill ok={Boolean(setup?.cisco_credentials_configured)} text={setup?.cisco_credentials_configured ? 'Saved' : 'Not needed'} />
@@ -259,7 +303,7 @@ function SearchPanel({ refreshStats, notify, setError, setLoading, setEvidencePi
   }
 
   return (
-    <section className="panel wide-panel focus-panel">
+    <section id="lookup" className="panel wide-panel focus-panel">
       <div className="panel-heading">
         <div><p className="eyebrow">Main workflow</p><h2>Search Cisco EOX by PID</h2><p className="muted">No method selection needed. The app checks DB first, uses Cisco API only if already configured, then falls back to web scraping and saves what it learns.</p></div>
         <StatusPill ok={true} text="Smart lookup" />
@@ -289,8 +333,8 @@ function ResultCards({ results, onEvidence }) {
               <span>End of Sale</span><strong>{nvl(product.end_of_sale_date)}</strong>
               <span>Last Support</span><strong>{nvl(product.last_date_of_support)}</strong>
             </div>
-            {item.message && <p className="hint">{item.message}</p>}
-            <button className="secondary" type="button" onClick={() => onEvidence(item.pid)}>View raw Cisco tables</button>
+            {item.message && <p className="hint card-message">{item.message}</p>}
+            <div className="card-actions"><button className="secondary" type="button" onClick={() => onEvidence(item.pid)}>View raw Cisco tables</button></div>
           </article>
         );
       })}
@@ -301,15 +345,31 @@ function ResultCards({ results, onEvidence }) {
 function AutoPopPanel({ setup, refreshStats, notify, setError }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [jobs, setJobs] = useState([]);
-  const [options, setOptions] = useState({ limit_categories: 1, limit_series_eox: 10, limit_announcements: 2, parse_workers: 2, delay: 1, category_break: 10, force_refresh: false });
+  const [options, setOptions] = useState(DEFAULT_AUTOPOP_OPTIONS);
 
   async function refreshJobs() {
     try {
-      const data = await graphqlRequest(graphQueries.jobs, { limit: 20 });
-      setJobs(data?.data?.autoPopJobs || []);
+      const data = await apiRequest('/api/autopop/jobs?limit=20');
+      setJobs(data?.items || []);
     } catch (error) {
       setError(error.message);
     }
+  }
+
+  function normalizedOptions(rawOptions) {
+    const adjusted = {
+      ...rawOptions,
+      limit_categories: clampNumber(rawOptions.limit_categories, 1, MAX_GUI_CATEGORIES, MAX_GUI_CATEGORIES),
+      limit_series_eox: clampNumber(rawOptions.limit_series_eox, 1, 100000, 2000),
+      limit_announcements: clampNumber(rawOptions.limit_announcements, 1, 100000, 500),
+      parse_workers: clampNumber(rawOptions.parse_workers, 1, MAX_GUI_WORKERS, 4),
+      delay: clampNumber(rawOptions.delay, 0, 60, 5),
+      category_break: clampNumber(rawOptions.category_break, 0, 3600, 60)
+    };
+    const notes = [];
+    if (Number(rawOptions.limit_categories) > MAX_GUI_CATEGORIES) notes.push(`categories capped at ${MAX_GUI_CATEGORIES}`);
+    if (Number(rawOptions.parse_workers) > MAX_GUI_WORKERS) notes.push(`parser workers capped at ${MAX_GUI_WORKERS}`);
+    return { adjusted, notes };
   }
 
   async function startJob(full = false) {
@@ -318,10 +378,15 @@ function AutoPopPanel({ setup, refreshStats, notify, setError }) {
       setError('Set up the database first. For easiest setup, click Start with local SQLite.');
       return;
     }
-    const payload = full ? { parse_workers: 2, delay: 1, category_break: 15, force_refresh: false } : options;
+    const basePayload = full ? DEFAULT_AUTOPOP_OPTIONS : options;
+    const { adjusted, notes } = normalizedOptions(basePayload);
+    const payload = {
+      ...adjusted,
+      note: notes.length ? `GUI adjusted: ${notes.join(', ')}` : null
+    };
     try {
       const data = await apiRequest('/api/autopop/jobs', { method: 'POST', body: JSON.stringify(payload) });
-      notify(`Auto_Pop job #${data.id} started`);
+      notify(`Auto_Pop job #${data.id} started${notes.length ? ` (${notes.join(', ')})` : ''}`);
       await refreshJobs();
       await refreshStats();
     } catch (error) {
@@ -340,31 +405,58 @@ function AutoPopPanel({ setup, refreshStats, notify, setError }) {
     }
   }
 
+  async function clearJobs() {
+    setError('');
+    try {
+      const data = await apiRequest('/api/autopop/jobs/clear?delete_logs=true', { method: 'DELETE' });
+      notify(`Cleared ${data.deleted_jobs || 0} old job(s)`);
+      await refreshJobs();
+      await refreshStats();
+    } catch (error) {
+      setError(error.message);
+    }
+  }
+
   useEffect(() => { refreshJobs(); }, []);
+
+  useEffect(() => {
+    if (!jobs.some((job) => ['queued', 'running', 'cancel_requested'].includes(job.status))) return undefined;
+    const timer = window.setInterval(async () => {
+      await refreshJobs();
+      await refreshStats();
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [jobs]);
 
   function setOption(key, value) {
     setOptions((current) => ({ ...current, [key]: value }));
   }
 
+  const runningJob = jobs.find((job) => ['queued', 'running', 'cancel_requested'].includes(job.status));
+
   return (
-    <section className="panel">
+    <section id="autopop" className="panel autopop-panel">
       <div className="panel-heading">
-        <div><p className="eyebrow">Build local DB</p><h2>Auto_Pop</h2><p className="muted">Uses the database you configured above. It stores results directly in DB, sleeps between categories, and skips recently refreshed categories.</p></div>
-        <button className="secondary" type="button" onClick={refreshJobs}>Refresh</button>
+        <div><p className="eyebrow">Build local DB</p><h2>Auto_Pop</h2><p className="muted">Uses the database you configured above. High category caps mean “crawl everything discovered”; parser workers are capped to protect small servers.</p></div>
+        <div className="button-row panel-actions"><button className="secondary" type="button" onClick={refreshJobs}>Refresh</button><button className="secondary" type="button" onClick={clearJobs}>Clear old jobs</button></div>
       </div>
+      {runningJob && <div className="inline-status"><strong>Running:</strong> job #{runningJob.id} · {runningJob.status}. This section refreshes every 5 seconds.</div>}
       <div className="button-row">
-        <button type="button" disabled={!setup?.database_ready} onClick={() => startJob(false)}>Start safe Auto_Pop</button>
+        <button type="button" disabled={!setup?.database_ready} onClick={() => startJob(false)}>Start Auto_Pop</button>
+        <button className="secondary" type="button" onClick={() => setOptions(DEFAULT_AUTOPOP_OPTIONS)}>Use full-crawl defaults</button>
         <button className="secondary" type="button" onClick={() => setShowAdvanced(!showAdvanced)}>{showAdvanced ? 'Hide options' : 'Advanced options'}</button>
       </div>
       {showAdvanced && (
         <div className="advanced-box form-grid compact auto-grid">
-          <label>Categories<input type="number" min="1" value={options.limit_categories} onChange={(event) => setOption('limit_categories', Number(event.target.value))} /></label>
+          <label>Categories <small>100 = all discovered</small><input type="number" min="1" max="10000" value={options.limit_categories} onChange={(event) => setOption('limit_categories', Number(event.target.value))} /></label>
           <label>Series per category<input type="number" min="1" value={options.limit_series_eox} onChange={(event) => setOption('limit_series_eox', Number(event.target.value))} /></label>
           <label>Announcements<input type="number" min="1" value={options.limit_announcements} onChange={(event) => setOption('limit_announcements', Number(event.target.value))} /></label>
-          <label>Parser workers<input type="number" min="1" max="8" value={options.parse_workers} onChange={(event) => setOption('parse_workers', Number(event.target.value))} /></label>
-          <label>Delay seconds<input type="number" min="0" step="0.5" value={options.delay} onChange={(event) => setOption('delay', Number(event.target.value))} /></label>
-          <label>Category break<input type="number" min="0" value={options.category_break} onChange={(event) => setOption('category_break', Number(event.target.value))} /></label>
+          <label>Parser workers <small>auto-capped at 8</small><input type="number" min="1" max="128" value={options.parse_workers} onChange={(event) => setOption('parse_workers', Number(event.target.value))} /></label>
+          <label>Delay seconds<input type="number" min="0" max="60" step="0.5" value={options.delay} onChange={(event) => setOption('delay', Number(event.target.value))} /></label>
+          <label>Category break<input type="number" min="0" max="3600" value={options.category_break} onChange={(event) => setOption('category_break', Number(event.target.value))} /></label>
           <label className="checkbox-row"><input type="checkbox" checked={options.force_refresh} onChange={(event) => setOption('force_refresh', event.target.checked)} />Force refresh despite cooldown</label>
+          <label className="checkbox-row"><input type="checkbox" checked={options.allow_empty} onChange={(event) => setOption('allow_empty', event.target.checked)} />Treat cooldown-only runs as successful</label>
+          <div className="option-note">For a weak server: workers 4, delay 5, category break 60 is a strong long-running setting.</div>
         </div>
       )}
       <SimpleTable rows={jobs} columns={['id', 'status', 'processId', 'returnCode', 'createdAt', 'startedAt', 'finishedAt', 'lastError']} actions={(row) => ['running', 'queued'].includes(row.status) ? <button className="secondary small-button" type="button" onClick={() => cancelJob(row.id)}>Cancel</button> : null} />
@@ -388,8 +480,8 @@ function EvidencePanel({ pid, setPid, setError }) {
     if (!target) return;
     setError('');
     try {
-      const data = await graphqlRequest(graphQueries.productEvidence, { pid: target });
-      setEvidence(data?.data?.productEvidence || null);
+      const data = await getProductEvidence(target, 25, 500);
+      setEvidence(data || null);
       setActiveTable(0);
     } catch (error) {
       setError(error.message);
@@ -400,10 +492,10 @@ function EvidencePanel({ pid, setPid, setError }) {
   const tables = evidence?.tables || [];
 
   return (
-    <section className="panel wide-panel evidence-panel">
+    <section id="evidence" className="panel wide-panel evidence-panel">
       <div className="panel-heading">
         <div><p className="eyebrow">Raw evidence</p><h2>Cisco table viewer</h2><p className="muted">Shows the exact scraped Cisco rows and every table saved for the announcement. Empty fields appear as N/A.</p></div>
-        <a className="link-button secondary-link" href="/graphql" target="_blank" rel="noreferrer">GraphQL</a>
+        <a className="link-button secondary-link" href={`${API_BASE_URL}/docs`} target="_blank" rel="noreferrer">API docs</a>
       </div>
       <form className="search-row" onSubmit={(event) => { event.preventDefault(); setPid(input); loadEvidence(input); }}>
         <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="Enter PID to inspect raw tables" />
@@ -416,37 +508,37 @@ function EvidencePanel({ pid, setPid, setError }) {
             <h3>{product?.pid || input}</h3>
             <div className="detail-list">
               <span>Status</span><strong>{nvl(product?.status)}</strong>
-              <span>Product</span><strong>{nvl(product?.productName)}</strong>
+              <span>Product</span><strong>{nvl(product?.product_name)}</strong>
               <span>Series</span><strong>{nvl(product?.series)}</strong>
-              <span>End of Sale</span><strong>{nvl(product?.endOfSaleDate)}</strong>
-              <span>SW Maintenance</span><strong>{nvl(product?.endOfSwMaintenance)}</strong>
-              <span>Security Support</span><strong>{nvl(product?.endOfSecuritySupport)}</strong>
-              <span>Last Support</span><strong>{nvl(product?.lastDateOfSupport)}</strong>
+              <span>End of Sale</span><strong>{nvl(product?.end_of_sale_date)}</strong>
+              <span>SW Maintenance</span><strong>{nvl(product?.end_of_sw_maintenance)}</strong>
+              <span>Security Support</span><strong>{nvl(product?.end_of_security_support)}</strong>
+              <span>Last Support</span><strong>{nvl(product?.last_date_of_support)}</strong>
             </div>
           </div>
           <div className="summary-card">
             <h3>Announcement</h3>
             {(evidence.announcements || []).slice(0, 3).map((announcement) => (
               <div className="announcement-block" key={announcement.id}>
-                <strong>{nvl(announcement.announcementName || announcement.title)}</strong>
+                <strong>{nvl(announcement.announcement_name || announcement.title)}</strong>
                 <p>{nvl(announcement.technology)} · {nvl(announcement.series)}</p>
-                {announcement.announcementUrl && <a href={announcement.announcementUrl} target="_blank" rel="noreferrer">Open Cisco page</a>}
+                {announcement.announcement_url && <a href={announcement.announcement_url} target="_blank" rel="noreferrer">Open Cisco page</a>}
               </div>
             ))}
             {!evidence.announcements?.length && <p className="hint">No announcement row linked yet.</p>}
           </div>
         </div>
       )}
-      {evidence?.affectedProducts?.length > 0 && (
+      {evidence?.affected_products?.length > 0 && (
         <div className="raw-section">
           <h3>Affected product rows</h3>
-          <SimpleTable rows={evidence.affectedProducts.map((item) => ({ pid: item.pid, description: item.productDescription, table: item.tableIndex, row: item.rowIndex, source: item.source, ...extractColumnPreview(item.payload) }))} />
+          <SimpleTable rows={evidence.affected_products.map((item) => ({ pid: item.pid, description: item.product_description, table: item.table_index, row: item.row_index, source: item.source, ...extractColumnPreview(item.columns || {}) }))} />
         </div>
       )}
       {tables.length > 0 && (
         <div className="raw-section">
           <div className="table-tabs">
-            {tables.map((table, index) => <button className={index === activeTable ? 'active-tab' : 'secondary'} type="button" key={table.id} onClick={() => setActiveTable(index)}>Table {table.tableIndex}</button>)}
+            {tables.map((table, index) => <button className={index === activeTable ? 'active-tab' : 'secondary'} type="button" key={table.id} onClick={() => setActiveTable(index)}>Table {table.table_index}</button>)}
           </div>
           <RawCiscoTable table={tables[activeTable]} />
         </div>
@@ -469,7 +561,7 @@ function RawCiscoTable({ table }) {
   return (
     <div className="raw-table-card">
       <div className="raw-table-heading">
-        <div><h3>{table.heading || table.caption || `Cisco table ${table.tableIndex}`}</h3><p className="hint">Announcement ID {table.announcementId} · {rows.length} row(s)</p></div>
+        <div><h3>{table.heading || table.caption || `Cisco table ${table.table_index}`}</h3><p className="hint">Announcement ID {table.announcement_id} · {rows.length} row(s)</p></div>
       </div>
       <div className="table-wrap raw-table-wrap">
         <table>
@@ -498,33 +590,41 @@ function DatabaseExplorer({ setError, setEvidencePid }) {
   const [search, setSearch] = useState('');
   const [limit, setLimit] = useState(25);
   const [rows, setRows] = useState([]);
+  const [localNotice, setLocalNotice] = useState('');
 
   async function run(event) {
     event?.preventDefault();
     setError('');
+    setLocalNotice('');
+    const config = explorerDatasets.find((item) => item.key === dataset) || explorerDatasets[0];
     try {
-      const variables = ['checkpoints', 'system_events'].includes(dataset) ? { limit: Number(limit) } : { search: search || null, limit: Number(limit) };
-      const data = await graphqlRequest(graphQueries[dataset], variables);
-      const key = Object.keys(data.data || {})[0];
-      setRows(data?.data?.[key] || []);
+      const params = new URLSearchParams({ limit: String(clampNumber(limit, 1, 200, 25)) });
+      if (config.searchable && search) params.set('q', search);
+      const data = await apiRequest(`${config.path}?${params.toString()}`);
+      const items = config.itemKey ? data?.[config.itemKey] : data;
+      setRows(Array.isArray(items) ? items : []);
+      if (!Array.isArray(items) || !items.length) setLocalNotice('No matching rows found. Try a smaller filter or run Auto_Pop first.');
     } catch (error) {
+      setRows([]);
       setError(error.message);
     }
   }
 
   useEffect(() => { run(); }, [dataset]);
 
-  const columns = useMemo(() => rows.length ? Object.keys(rows[0]).filter((key) => !['payload', 'rawResponse'].includes(key)).slice(0, 10) : [], [rows]);
+  const columns = useMemo(() => rows.length ? Object.keys(rows[0]).filter((key) => !['payload', 'rawResponse', 'raw_response'].includes(key)).slice(0, 10) : [], [rows]);
+  const selectedConfig = explorerDatasets.find((item) => item.key === dataset) || explorerDatasets[0];
 
   return (
-    <section className="panel wide-panel">
-      <div className="panel-heading"><div><p className="eyebrow">Database</p><h2>Browse saved records</h2><p className="muted">This view uses GraphQL. Missing fields are displayed as N/A.</p></div></div>
+    <section id="browse" className="panel wide-panel browse-panel">
+      <div className="panel-heading"><div><p className="eyebrow">Database</p><h2>Browse saved records</h2><p className="muted">REST-based browser for common records. Large raw payloads stay hidden so phones and old servers do not choke.</p></div></div>
       <form className="search-row" onSubmit={run}>
-        <select value={dataset} onChange={(event) => setDataset(event.target.value)}>{datasets.map((item) => <option value={item} key={item}>{item.replaceAll('_', ' ')}</option>)}</select>
-        <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search PID, announcement, status, technology" />
-        <input className="short-input" type="number" min="1" max="500" value={limit} onChange={(event) => setLimit(event.target.value)} />
+        <select value={dataset} onChange={(event) => setDataset(event.target.value)}>{explorerDatasets.map((item) => <option value={item.key} key={item.key}>{item.label}</option>)}</select>
+        <input value={search} onChange={(event) => setSearch(event.target.value)} disabled={!selectedConfig.searchable} placeholder={selectedConfig.searchable ? 'Search PID, status, technology' : 'This dataset is not text-filtered'} />
+        <input className="short-input" type="number" min="1" max="200" value={limit} onChange={(event) => setLimit(event.target.value)} />
         <button type="submit">Search DB</button>
       </form>
+      {localNotice && <div className="notice warning small">{localNotice}</div>}
       <SimpleTable rows={rows} columns={columns} actions={(row) => row.pid ? <button className="secondary small-button" type="button" onClick={() => setEvidencePid(row.pid)}>Evidence</button> : null} />
     </section>
   );
@@ -592,7 +692,7 @@ function ExportPanel({ notify, setError }) {
   }, {});
 
   return (
-    <section className="panel wide-panel export-panel">
+    <section id="reports" className="panel wide-panel export-panel">
       <div className="panel-heading">
         <div>
           <p className="eyebrow">Reports</p>
@@ -647,21 +747,61 @@ function StatsPanel({ stats, refreshStats }) {
     ['Auto_Pop jobs', stats?.totalAutopopJobs ?? 0]
   ];
   return (
-    <section className="panel stats-panel">
+    <section id="snapshot" className="panel stats-panel">
       <div className="panel-heading"><div><p className="eyebrow">Snapshot</p><h2>Local DB</h2></div><button className="secondary" type="button" onClick={refreshStats}>Refresh</button></div>
       <div className="metric-grid">{metrics.map(([name, value]) => <div className="metric" key={name}><span>{name}</span><strong>{value}</strong></div>)}</div>
     </section>
   );
 }
 
+function HelpGuidePanel() {
+  const [open, setOpen] = useState(false);
+  const tips = [
+    ['Pick a database', 'SQLite is easiest for a laptop/server trial. PostgreSQL is better for larger shared deployments.'],
+    ['Search Cisco EOX by PID', 'Add one or more PIDs. The app checks the DB first, then learns missing data automatically.'],
+    ['Auto_Pop', 'Builds your local DB by crawling Cisco slowly. Safe mode limits the crawl; advanced options control volume and cooldown.'],
+    ['Force refresh', 'Use only when you intentionally want to crawl a recently refreshed category again.'],
+    ['Cisco table viewer', 'Shows saved evidence from Cisco announcement pages. It uses REST and loads a bounded number of rows.'],
+    ['Reports', 'Export CSV/XLSX. Pick recommended fields for common users or select Cisco table columns when needed.'],
+    ['Snapshot', 'Shows DB counts. Click Refresh after long jobs if the tile has not updated automatically.'],
+  ];
+  return (
+    <section id="guide" className="panel guide-panel">
+      <div className="panel-heading">
+        <div><p className="eyebrow">Guide</p><h2>How to use this page</h2><p className="muted">A quick explanation for first-time users.</p></div>
+        <button className="secondary" type="button" onClick={() => setOpen(!open)}>{open ? 'Hide guide' : 'Open guide'}</button>
+      </div>
+      {open && <div className="guide-grid">{tips.map(([title, body]) => <div className="guide-item" key={title}><strong>{title}</strong><p>{body}</p></div>)}</div>}
+    </section>
+  );
+}
+
+function DashboardNav() {
+  const items = [
+    ['Setup', '#setup'],
+    ['Snapshot', '#snapshot'],
+    ['Lookup', '#lookup'],
+    ['Auto_Pop', '#autopop'],
+    ['Evidence', '#evidence'],
+    ['Browse', '#browse'],
+    ['Reports', '#reports'],
+    ['Guide', '#guide']
+  ];
+  return (
+    <nav className="dashboard-nav" aria-label="Page sections">
+      {items.map(([label, href]) => <a key={href} href={href}>{label}</a>)}
+    </nav>
+  );
+}
+
 function MessageBar({ error, message, loading, clear }) {
   if (!error && !message && !loading) return null;
   return (
-    <section className="message-bar">
-      {loading && <span className="notice">Working...</span>}
-      {message && <span className="notice success">{message}</span>}
-      {error && <span className="notice error">{error}</span>}
-      <button className="secondary small-button" type="button" onClick={clear}>Clear</button>
+    <section className="message-bar" role="status" aria-live="polite">
+      {loading && <span className="notice toast loading-toast">Working...</span>}
+      {message && <span className="notice success toast">{asText(message)}</span>}
+      {error && <span className="notice error toast">{asText(error, 'Unexpected error')}</span>}
+      <button className="secondary small-button toast-clear" type="button" onClick={clear}>Clear</button>
     </section>
   );
 }
@@ -697,7 +837,7 @@ export default function App() {
     refreshSetup();
     refreshStats();
     const onError = (event) => logFrontendEvent('error', 'frontend_window_error', event.message || 'Window error', { filename: event.filename, lineno: event.lineno });
-    const onUnhandled = (event) => logFrontendEvent('error', 'frontend_unhandled_rejection', String(event.reason || 'Unhandled promise rejection'));
+    const onUnhandled = (event) => logFrontendEvent('error', 'frontend_unhandled_rejection', asText(event.reason, 'Unhandled promise rejection'));
     window.addEventListener('error', onError);
     window.addEventListener('unhandledrejection', onUnhandled);
     return () => {
@@ -707,12 +847,14 @@ export default function App() {
   }, []);
 
   return (
-    <main>
+    <main className="app-shell">
       <header className="hero">
         <div><p className="eyebrow">Free Cisco lifecycle tool</p><h1>Cisco EOX Manager</h1><p>Search PIDs, save missing EOX data automatically, browse raw Cisco tables, and export reports from your local database.</p></div>
-        <div className="hero-actions"><a href="/docs" target="_blank" rel="noreferrer">API docs</a><a href="/graphql" target="_blank" rel="noreferrer">GraphQL</a></div>
+        <div className="hero-actions"><a href={`${API_BASE_URL}/docs`} target="_blank" rel="noreferrer">API docs</a><a href={`${API_BASE_URL}/graphql`} target="_blank" rel="noreferrer">GraphQL</a></div>
       </header>
+      <DashboardNav />
       <MessageBar error={error} message={message} loading={loading} clear={() => { setError(''); setMessage(''); }} />
+      <HelpGuidePanel />
       <section className="grid two-columns"><DatabaseSetupCard setup={setup} refreshSetup={refreshSetup} refreshStats={refreshStats} notify={notify} setError={setError} setLoading={setLoading} /><StatsPanel stats={stats} refreshStats={refreshStats} /></section>
       <SearchPanel refreshStats={refreshStats} notify={notify} setError={setError} setLoading={setLoading} setEvidencePid={setEvidencePid} />
       <section className="grid two-columns"><AutoPopPanel setup={setup} refreshStats={refreshStats} notify={notify} setError={setError} /><OptionalApiCard setup={setup} refreshSetup={refreshSetup} notify={notify} setError={setError} setLoading={setLoading} /></section>

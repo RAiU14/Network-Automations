@@ -286,4 +286,9 @@ updated_output.xlsx
 PM_Report/Switching/Cisco 9000 switch.py
 uploads/
 PM_Report\Switching\remark.py
-Django/
+Django/Cisco_EOX_Manager/data/*.db
+Cisco_EOX_Manager/data/*.db-journal
+Cisco_EOX_Manager/data/*.db-wal
+Cisco_EOX_Manager/data/*.db-shm
+Cisco_EOX_Manager/data/.env.local
+Cisco_EOX_Manager/data/.eox_runtime.env

@@ -1,4 +1,35 @@
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const rawConfiguredApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const inferredApiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
+
+const configuredLooksLocal = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(rawConfiguredApiBaseUrl);
+const browserIsLocal = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+
+export const API_BASE_URL = rawConfiguredApiBaseUrl && !(configuredLooksLocal && !browserIsLocal)
+  ? rawConfiguredApiBaseUrl
+  : inferredApiBaseUrl;
+
+export function formatApiError(payload, fallback = 'Request failed') {
+  if (!payload) return fallback;
+  if (typeof payload === 'string') return payload || fallback;
+
+  const detail = payload.detail ?? payload.message ?? payload.error;
+  if (Array.isArray(detail)) {
+    return detail.map((item) => {
+      if (typeof item === 'string') return item;
+      const loc = Array.isArray(item?.loc) ? item.loc.filter((part) => part !== 'body').join('.') : '';
+      const msg = item?.msg || item?.message || JSON.stringify(item);
+      return loc ? `${loc}: ${msg}` : msg;
+    }).join('; ');
+  }
+  if (detail && typeof detail === 'object') return JSON.stringify(detail);
+  if (detail) return String(detail);
+
+  try {
+    return JSON.stringify(payload);
+  } catch (_error) {
+    return fallback;
+  }
+}
 
 export async function apiRequest(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -13,8 +44,7 @@ export async function apiRequest(path, options = {}) {
   const payload = contentType.includes('application/json') ? await response.json() : await response.text();
 
   if (!response.ok) {
-    const message = typeof payload === 'string' ? payload : payload.detail || payload.message || 'Request failed';
-    throw new Error(message);
+    throw new Error(formatApiError(payload, `Request failed with HTTP ${response.status}`));
   }
 
   return payload;
@@ -45,8 +75,9 @@ export async function downloadExport(dataset, format, search = '', limit = 10000
   }
   const response = await fetch(`${API_BASE_URL}/api/export/${dataset}?${params.toString()}`);
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || 'Export failed');
+    const contentType = response.headers.get('content-type') || '';
+    const payload = contentType.includes('application/json') ? await response.json() : await response.text();
+    throw new Error(formatApiError(payload, 'Export failed'));
   }
   const blob = await response.blob();
   const disposition = response.headers.get('content-disposition') || '';
@@ -78,4 +109,9 @@ export async function logFrontendEvent(level, eventType, message, payload = {}) 
   } catch (_error) {
     return null;
   }
+}
+
+export async function getProductEvidence(pid, tableLimit = 20, rowLimit = 500) {
+  const params = new URLSearchParams({ table_limit: String(tableLimit), row_limit: String(rowLimit) });
+  return apiRequest(`/api/eox/evidence/${encodeURIComponent(pid)}?${params.toString()}`);
 }

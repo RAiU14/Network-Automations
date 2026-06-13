@@ -1,13 +1,12 @@
 # Cisco EOX Manager Frontend
 
-The frontend is a React/Vite GUI for local setup, PID lookup, Auto_Pop job control, GraphQL database browsing, exports, and operational visibility.
+React/Vite GUI for Cisco EOX Manager.
 
-## Start in dev mode
+## Run in Docker
 
 ```bash
-cd Cisco_EOX_Manager/front_end
-npm install
-npm run dev
+cd Cisco_EOX_Manager
+docker compose up --build
 ```
 
 Open:
@@ -16,51 +15,38 @@ Open:
 http://127.0.0.1:5173
 ```
 
-The frontend expects the backend at:
+## Backend URL
+
+The frontend auto-detects the backend as:
 
 ```text
-http://127.0.0.1:8000
+http://same-host-as-browser:8000
 ```
 
-Set a different backend URL:
+Keep this empty for remote server use:
+
+```yaml
+VITE_API_BASE_URL: ""
+```
+
+Set an explicit backend only when needed:
 
 ```env
-VITE_API_BASE_URL=http://127.0.0.1:8000
+VITE_API_BASE_URL=http://SERVER-IP:8000
 ```
 
 ## GUI sections
 
-| Section | Purpose |
-|---|---|
-| Database overview | Shows DB totals from GraphQL. |
-| Setup | One-click SQLite for new users, or PostgreSQL/advanced URL for larger deployments. Cisco API setup is optional and hidden behind an advanced card. |
-| Smart PID lookup | Add/remove PID chips and search. The backend chooses DB/API/scraper automatically. |
-| Auto_Pop jobs | Start/cancel/monitor controlled background crawls. |
-| Database browser | Browse DB data through GraphQL queries. |
-| Export | Download CSV/Excel from DB datasets with checkbox-based column selection. |
-| Raw Cisco table viewer | View every saved table, row, and affected-product mapping for a PID. |
-
-## Authentication behavior
-
-The frontend does not ask for login or admin tokens by default. The tool is intended for local/internal use. If authentication is required later, enable it on the backend and place the app behind a proper enterprise auth layer.
-
-## Logging
-
-The frontend captures window errors and unhandled promise rejections, then posts them to:
-
 ```text
-POST /api/logs/frontend
+Guide                  explains the tiles/buttons/options
+Pick a database         SQLite or PostgreSQL setup
+Local DB snapshot       DB counts from REST
+Search Cisco EOX        smart PID lookup
+Auto_Pop                controlled DB population
+Cisco API setup         optional, not required
+Cisco table viewer      raw evidence through REST
+Database browser        GraphQL-based developer view
+Reports                 CSV/XLSX exports with checkboxes
 ```
 
-Those events are visible through GraphQL `systemEvents`.
-
-
-## Beginner flow
-
-The frontend avoids asking users whether to use Cisco API or scraping. Users add PID chips, click the search button, and the backend chooses the best available source automatically. The raw Cisco table viewer uses GraphQL to retrieve every table and affected-product row saved in the database.
-
-## Report builder
-
-The report section is designed for common users, not only programmers. The default dataset is `eox_report`. Users select Excel or CSV, choose recommended/core/all columns, or tick individual fields. Dynamic Cisco table columns appear after Auto_Pop or smart lookup stores those columns in the database.
-
-The frontend does not offer JSON file download. Developers can use GraphQL when JSON-shaped data is needed.
+The normal user flow uses REST and does not require GraphQL. The GraphQL button remains available for developer testing.

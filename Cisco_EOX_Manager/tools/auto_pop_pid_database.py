@@ -365,7 +365,7 @@ def _merge_duplicate_eox_records(records: Iterable[Mapping[str, Any]]) -> list[d
                     "announcement_url": duplicate.get("announcement_url"),
                     "source": duplicate.get("source"),
                     "status": duplicate.get("status"),
-                    "payload": duplicate.get("payload"),
+                    "lifecycle": _canonicalize_milestones(duplicate.get("payload") if isinstance(duplicate.get("payload"), Mapping) else duplicate),
                 }
             )
         if alternatives:
@@ -940,6 +940,14 @@ def _row_product_description(row_info: Mapping[str, Any], fallback: str) -> str:
     return fallback
 
 
+def _announcement_summary(announcement_data: Mapping[str, Any], tables: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    return {
+        "title": announcement_data.get("title"),
+        "url": announcement_data.get("url"),
+        "table_count": len(tables),
+    }
+
+
 def _records_from_full_announcement(
     *,
     announcement_data: Mapping[str, Any],
@@ -955,6 +963,8 @@ def _records_from_full_announcement(
     milestone_fields = _milestone_fields_from_all_tables(tables)
     affected_rows = _affected_rows_from_tables(tables)
     output: list[dict[str, Any]] = []
+    include_tables_on_next_record = True
+    announcement_summary = _announcement_summary(announcement_data, tables)
 
     for row_info in affected_rows:
         for pid in row_info.get("pids") or []:
@@ -972,14 +982,11 @@ def _records_from_full_announcement(
                 "ProductBulletinURL": announcement_url,
                 "LinkToProductBulletinURL": announcement_url,
                 "scrape_mode": "full_table",
-                # The exact row from the affected-products table. This is the
-                # important change requested by the original Auto_Pop workflow.
                 "affected_product_row": row_info,
-                # Every table from the Cisco announcement page, not only the
-                # milestone/product tables. This keeps the raw evidence intact.
-                "announcement_tables": tables,
                 "milestone_fields": milestone_fields,
             }
+            if include_tables_on_next_record:
+                full_payload["announcement_tables"] = tables
             record = _eox_record(
                 pid=pid,
                 technology=technology,
@@ -993,24 +1000,22 @@ def _records_from_full_announcement(
                 series_url=series_url,
                 raw_response={
                     "birth_certificate": dict(birth_certificate or {}),
-                    "announcement": dict(announcement_data),
+                    "announcement": announcement_summary,
                     "affected_product_row": row_info,
                     "series_record": dict(series_record),
                 },
             )
-            # _eox_record keeps scalar milestone fields import-friendly. Make
-            # sure the nested full-table evidence is also stored in payload so
-            # current database persistence code stores it without requiring backend
-            # changes.
             record["payload"].update(
                 {
                     "scrape_mode": "full_table",
                     "affected_product_row": row_info,
-                    "announcement_tables": tables,
                     "milestone_fields": milestone_fields,
                     "AnnouncementTitle": announcement_data.get("title"),
                 }
             )
+            if include_tables_on_next_record:
+                record["payload"]["announcement_tables"] = tables
+                include_tables_on_next_record = False
             output.append(record)
 
     return output
@@ -1573,9 +1578,13 @@ def _build_from_cisco(
                         status_counts[status] += 1
                         category_eox_records.extend(records)
 
-                category_eox_records = _merge_duplicate_eox_records(category_eox_records)
-                catalog_records.extend(category_catalog_records)
-                eox_records.extend(category_eox_records)
+                if save_category_to_db:
+                    # DB-first mode preserves every affected PID row. Product snapshots are deduplicated in the database, while evidence rows stay normalized.
+                    pass
+                else:
+                    category_eox_records = _merge_duplicate_eox_records(category_eox_records)
+                    catalog_records.extend(category_catalog_records)
+                    eox_records.extend(category_eox_records)
 
             announcements_seen = len({item.get("announcement_url") for item in category_eox_records if item.get("announcement_url")})
             category_stats = {
@@ -1642,13 +1651,13 @@ def _build_from_cisco(
     seed = _empty_seed()
     seed["categories"] = categories_seen
     seed["pid_catalog"] = catalog_records
-    seed["eox_records"] = _merge_duplicate_eox_records(eox_records)
+    seed["eox_records"] = _merge_duplicate_eox_records(eox_records) if not save_category_to_db else []
 
     seed["metadata"].update(
         {
             "categories_seen": len(categories_seen),
-            "catalog_records": len(seed["pid_catalog"]),
-            "eox_records": len(seed.get("eox_records") or []),
+            "catalog_records": len(seed["pid_catalog"]) if not save_category_to_db else sum((item.get("catalog_inserted", 0) + item.get("catalog_updated", 0) + item.get("catalog_skipped", 0)) for item in category_save_results.values()),
+            "eox_records": len(seed.get("eox_records") or []) if not save_category_to_db else sum((item.get("products_inserted", 0) + item.get("products_updated", 0) + item.get("products_skipped", 0)) for item in category_save_results.values()),
             "include_eox_links": include_eox_links,
             "crawl_models": crawl_models,
             "full_eox_crawl": full_eox_crawl,
@@ -1826,7 +1835,8 @@ def build_catalog(
     seed["metadata"]["catalog_records"] = len(seed.get("pid_catalog") or [])
     seed["metadata"]["eox_records"] = len(seed.get("eox_records") or [])
 
-    if not seed["pid_catalog"] and not seed["eox_records"] and not allow_empty:
+    progressive_count = int(seed.get("metadata", {}).get("catalog_records") or 0) + int(seed.get("metadata", {}).get("eox_records") or 0)
+    if not seed["pid_catalog"] and not seed["eox_records"] and not allow_empty and progressive_count == 0:
         raise RuntimeError(
             "No PID/EOX data was discovered. Cisco may have blocked the request or the page layout may have changed. "
             "Try: --input-file pids.txt, --category-url Switches=https://www.cisco.com/c/en/us/support/switches/category.html, "

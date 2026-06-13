@@ -10,6 +10,7 @@ from app.schemas import (
     CacheSearchResponse,
     CacheStatsResponse,
     CatalogDiscoveryRequest,
+    EoxEvidenceResponse,
     CatalogDiscoveryResponse,
     LookupRequest,
     LookupResponse,
@@ -64,6 +65,16 @@ def search_pid_catalog(
 @router.get("/stats", response_model=CacheStatsResponse)
 def cache_stats(db: Session = Depends(get_db)) -> CacheStatsResponse:
     return EoxOrchestrator(db).get_stats()
+
+
+@router.get("/evidence/{pid}", response_model=EoxEvidenceResponse)
+def product_evidence(
+    pid: str,
+    table_limit: int = Query(default=20, ge=1, le=100),
+    row_limit: int = Query(default=500, ge=1, le=5000),
+    db: Session = Depends(get_db),
+) -> EoxEvidenceResponse:
+    return EoxOrchestrator(db).get_product_evidence(pid, table_limit=table_limit, row_limit=row_limit)
 
 
 @router.post("/discover-catalog", response_model=CatalogDiscoveryResponse)

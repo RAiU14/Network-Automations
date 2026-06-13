@@ -198,3 +198,30 @@ def mark_stale_jobs() -> None:
             db.commit()
     finally:
         db.close()
+
+def clear_old_jobs(db: Session, *, delete_logs: bool = False, statuses: list[str] | None = None) -> dict[str, Any]:
+    safe_statuses = statuses or ["completed", "failed", "cancelled", "skipped", "unknown_after_restart"]
+    jobs = db.query(AutoPopJob).filter(AutoPopJob.status.in_(safe_statuses)).all()
+    deleted_logs = 0
+    for job in jobs:
+        if delete_logs and job.log_file:
+            try:
+                path = Path(job.log_file)
+                if path.exists() and path.is_file():
+                    path.unlink()
+                    deleted_logs += 1
+            except Exception:
+                logger.warning("Could not delete Auto_Pop log file for job %s", job.id)
+        db.delete(job)
+    deleted_jobs = len(jobs)
+    db.commit()
+    create_system_event(
+        db,
+        level="info",
+        event_type="autopop_jobs_cleared",
+        source="backend",
+        message=f"Cleared {deleted_jobs} old Auto_Pop job(s)",
+        payload={"deleted_jobs": deleted_jobs, "deleted_logs": deleted_logs, "statuses": safe_statuses},
+        commit=True,
+    )
+    return {"deleted_jobs": deleted_jobs, "deleted_logs": deleted_logs, "statuses": safe_statuses, "skipped_running": 0}

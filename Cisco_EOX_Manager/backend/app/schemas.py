@@ -169,10 +169,22 @@ class PidCatalogSearchResponse(BaseModel):
 class CacheStatsResponse(BaseModel):
     total_products: int
     total_pid_catalog: int
+    total_announcements: int = 0
+    total_announcement_tables: int = 0
+    total_affected_products: int = 0
+    total_autopop_jobs: int = 0
+    database_size_mb: float | None = None
     by_status: dict[str, int]
     by_source: dict[str, int]
     by_catalog_source: dict[str, int]
     recent_lookups: int
+
+
+class EoxEvidenceResponse(BaseModel):
+    product: dict[str, Any] | None = None
+    affected_products: list[dict[str, Any]] = Field(default_factory=list)
+    announcements: list[dict[str, Any]] = Field(default_factory=list)
+    tables: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class FrontendLogRequest(BaseModel):
@@ -203,7 +215,7 @@ class SystemEventResponse(BaseModel):
 
 class CatalogDiscoveryRequest(BaseModel):
     categories: list[str] = Field(default_factory=list, description="Optional Cisco category names. Empty means all categories.")
-    limit_categories: int | None = Field(None, ge=1, le=100)
+    limit_categories: int | None = Field(None, ge=1, le=10000)
     include_eox_links: bool = True
     save_to_database: bool = True
     crawl_models: bool = False
@@ -225,11 +237,11 @@ class AuthSetupRequest(BaseModel):
 class AutoPopJobRequest(BaseModel):
     categories: list[str] = Field(default_factory=list)
     category_urls: list[str] = Field(default_factory=list)
-    limit_categories: int | None = Field(None, ge=1, le=100)
+    limit_categories: int | None = Field(None, ge=1, le=10000, description="High values are treated as all discovered categories and clamped by the API.")
     limit_series_eox: int | None = Field(None, ge=1)
     limit_announcements: int | None = Field(None, ge=1)
     eox_candidates_only: bool = False
-    parse_workers: int = Field(2, ge=1, le=8)
+    parse_workers: int = Field(2, ge=1, le=128, description="The API clamps high values to a safe worker count.")
     delay: float = Field(1.0, ge=0, le=60)
     category_break: float = Field(10.0, ge=0, le=3600)
     force_refresh: bool = False
