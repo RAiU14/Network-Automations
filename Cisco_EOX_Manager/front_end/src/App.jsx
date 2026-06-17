@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { API_BASE_URL, apiRequest, downloadExport, getExportOptions, getProductEvidence, graphqlRequest, logFrontendEvent, parsePids } from './api.js';
+import { API_BASE_URL, apiRequest, downloadExport, getExportOptions, getProductEvidence, getStoredAdminToken, graphqlRequest, logFrontendEvent, parsePids, setStoredAdminToken } from './api.js';
 
 const samplePids = ['AIR-CT5520-K9', 'C9300-24T'];
 const datasets = ['eox_report', 'products', 'affected_products', 'announcements', 'pid_catalog', 'checkpoints', 'system_events'];
@@ -110,21 +110,108 @@ function DatabaseSetupCard({ setup, refreshSetup, refreshStats, notify, setError
   const [password, setPassword] = useState('eox_password');
   const [sqlitePath, setSqlitePath] = useState('eox_dev.db');
   const [databaseUrl, setDatabaseUrl] = useState('');
+  const [postgresDefaults, setPostgresDefaults] = useState(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  function payload(testOnly) {
-    const base = { initialize_after_save: !testOnly, write_env_file: true, test_only: testOnly };
+  useEffect(() => {
+    loadPostgresDefaults(false);
+  }, []);
+
+  function basePayload(testOnly) {
+    return { initialize_after_save: !testOnly, write_env_file: true, test_only: testOnly };
+  }
+
+  function configurePayload(testOnly) {
+    const base = basePayload(testOnly);
     if (databaseType === 'sqlite') return { ...base, database_type: 'sqlite', sqlite_path: sqlitePath || null };
     if (databaseType === 'url') return { ...base, database_type: 'url', database_url: databaseUrl };
     return { ...base, database_type: 'postgresql', host, port: Number(port), database, username, password };
+  }
+
+  function postgresBootstrapPayload(testOnly = false) {
+    return {
+      host,
+      port: Number(port),
+      database,
+      username,
+      password,
+      maintenance_database: 'postgres',
+      create_database: true,
+      initialize_tables: !testOnly,
+      save_as_active: !testOnly,
+      write_env_file: true,
+      test_only: testOnly
+    };
+  }
+
+  async function loadPostgresDefaults(apply = true) {
+    try {
+      const data = await apiRequest('/api/setup/database/postgres-defaults');
+      setPostgresDefaults(data);
+      if (apply) {
+        setDatabaseType('postgresql');
+        setHost(data.host || 'postgres');
+        setPort(data.port || 5432);
+        setDatabase(data.database || 'eox_cache');
+        setUsername(data.username || 'eox_user');
+        setPassword(data.password || 'eox_password');
+        notify('Docker PostgreSQL defaults loaded. Click Save + Create Tables when ready.');
+      }
+    } catch (error) {
+      setError(error.message);
+    }
   }
 
   async function configure(testOnly = false) {
     setLoading(true);
     setError('');
     try {
-      const data = await apiRequest('/api/setup/database/configure', { method: 'POST', body: JSON.stringify(payload(testOnly)) });
+      const data = await apiRequest('/api/setup/database/configure', { method: 'POST', body: JSON.stringify(configurePayload(testOnly)) });
       notify(data.message || 'Database updated');
+      await refreshSetup();
+      await refreshStats();
+    } catch (error) {
+      setError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function bootstrapPostgres(testOnly = false) {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await apiRequest('/api/setup/database/postgres/bootstrap', { method: 'POST', body: JSON.stringify(postgresBootstrapPayload(testOnly)) });
+      if (!data.ok) {
+        setError(data.message || 'PostgreSQL setup failed');
+        return;
+      }
+      notify(data.message || 'PostgreSQL ready');
+      setDatabaseType('postgresql');
+      await refreshSetup();
+      await refreshStats();
+    } catch (error) {
+      setError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function oneClickDockerPostgres() {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await apiRequest('/api/setup/database/use-docker-postgres', { method: 'POST', body: JSON.stringify({}) });
+      if (!data.ok) {
+        setError(data.message || 'Docker PostgreSQL setup failed');
+        return;
+      }
+      setDatabaseType('postgresql');
+      setHost('postgres');
+      setPort(5432);
+      setDatabase(data.database_name || 'eox_cache');
+      notify(data.message || 'Docker PostgreSQL is ready');
+      await loadPostgresDefaults(false);
       await refreshSetup();
       await refreshStats();
     } catch (error) {
@@ -150,28 +237,63 @@ function DatabaseSetupCard({ setup, refreshSetup, refreshStats, notify, setError
     }
   }
 
+  async function seedDefaultData() {
+    if (!setup?.database_ready) {
+      setError('Create/initialize a database first, then start seeding.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const payload = { ...DEFAULT_AUTOPOP_OPTIONS, note: 'Started from database setup seed button' };
+      const data = await apiRequest('/api/autopop/jobs', { method: 'POST', body: JSON.stringify(payload) });
+      notify(`Seed / Auto_Pop job #${data.id} started`);
+      await refreshStats();
+    } catch (error) {
+      setError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const showPostgresTools = databaseType === 'postgresql';
+
   return (
     <section id="setup" className="panel setup-card">
       <div className="panel-heading">
         <div>
           <p className="eyebrow">Step 1</p>
-          <h2>Pick a database</h2>
-          <p className="muted">New users can start with SQLite in one click. PostgreSQL is available when you want a larger shared setup.</p>
+          <h2>Pick and initialize a database</h2>
+          <p className="muted">SQLite is the easiest trial mode. PostgreSQL is better for full datasets, GraphQL, and shared Docker deployments.</p>
         </div>
         <StatusPill ok={Boolean(setup?.database_ready)} text={setup?.database_ready ? 'Ready' : 'Needs setup'} />
       </div>
-      <div className="button-row starter-actions"><button type="button" onClick={startWithSqlite}>Start with local SQLite</button><span className="hint">No PostgreSQL required.</span></div>
+
+      <div className="starter-grid">
+        <button type="button" onClick={startWithSqlite}>Start with local SQLite</button>
+        <button className="secondary" type="button" onClick={() => loadPostgresDefaults(true)}>Use Docker PostgreSQL defaults</button>
+        <button className="secondary" type="button" onClick={oneClickDockerPostgres}>One-click Docker PostgreSQL</button>
+      </div>
+      <p className="hint setup-hint">Docker PostgreSQL uses <strong>postgres:5432</strong> from this app. The host shell uses <strong>127.0.0.1:{postgresDefaults?.host_port || 5433}</strong>.</p>
+
       <div className="choice-grid">
         <button className={databaseType === 'sqlite' ? 'choice active' : 'choice'} type="button" onClick={() => setDatabaseType('sqlite')}>
           <strong>SQLite</strong><span>Best for first-time local testing</span>
         </button>
         <button className={databaseType === 'postgresql' ? 'choice active' : 'choice'} type="button" onClick={() => setDatabaseType('postgresql')}>
-          <strong>PostgreSQL</strong><span>Best for Docker and scaling</span>
+          <strong>PostgreSQL</strong><span>Best for Docker, GraphQL, and scaling</span>
         </button>
         <button className={databaseType === 'url' ? 'choice active' : 'choice'} type="button" onClick={() => setDatabaseType('url')}>
           <strong>Advanced URL</strong><span>Use your own SQLAlchemy URL</span>
         </button>
       </div>
+
+      {showPostgresTools && postgresDefaults && (
+        <div className="notice small postgres-help">
+          <strong>Default Docker credentials:</strong> {postgresDefaults.username} / {postgresDefaults.password} / {postgresDefaults.database}. Use port {postgresDefaults.port} in this form. Port {postgresDefaults.host_port} is only for host tools.
+        </div>
+      )}
+
       <div className="form-grid compact">
         {databaseType === 'sqlite' && <label>SQLite file<input value={sqlitePath} onChange={(event) => setSqlitePath(event.target.value)} /></label>}
         {databaseType === 'postgresql' && (
@@ -184,14 +306,165 @@ function DatabaseSetupCard({ setup, refreshSetup, refreshStats, notify, setError
           </div>
         )}
         {databaseType === 'url' && <label>Database URL<input value={databaseUrl} onChange={(event) => setDatabaseUrl(event.target.value)} placeholder="sqlite:///./data/eox_dev.db" /></label>}
-        <div className="button-row">
-          <button type="button" onClick={() => configure(false)}>Save and initialize</button>
-          <button className="secondary" type="button" onClick={() => configure(true)}>Test only</button>
-        </div>
+
+        {databaseType === 'postgresql' ? (
+          <div className="button-row setup-actions">
+            <button type="button" onClick={() => bootstrapPostgres(false)}>Save + Create Tables</button>
+            <button className="secondary" type="button" onClick={() => bootstrapPostgres(true)}>Test only</button>
+            <button className="secondary" type="button" onClick={seedDefaultData}>Seed / Start Auto_Pop</button>
+          </div>
+        ) : (
+          <div className="button-row setup-actions">
+            <button type="button" onClick={() => configure(false)}>Save and initialize</button>
+            <button className="secondary" type="button" onClick={() => configure(true)}>Test only</button>
+            <button className="secondary" type="button" onClick={seedDefaultData}>Seed / Start Auto_Pop</button>
+          </div>
+        )}
       </div>
+
       <button className="text-button" type="button" onClick={() => setShowAdvanced(!showAdvanced)}>{showAdvanced ? 'Hide' : 'Show'} current database details</button>
       {showAdvanced && <pre className="code-block">{setup?.database_url_hint || 'No database configured yet'}</pre>}
       {setup?.database_error && <div className="notice error small">{setup.database_error}</div>}
+    </section>
+  );
+}
+
+
+function SecurityPanel({ notify, setError, setLoading }) {
+  const [status, setStatus] = useState(null);
+  const [token, setToken] = useState(getStoredAdminToken());
+  const [newToken, setNewToken] = useState('');
+  const [currentToken, setCurrentToken] = useState(getStoredAdminToken());
+
+  async function refreshSecurity() {
+    try {
+      const data = await apiRequest('/api/auth/security-status');
+      setStatus(data);
+    } catch (error) {
+      setError(error.message);
+    }
+  }
+
+  useEffect(() => {
+    refreshSecurity();
+  }, []);
+
+  async function saveToken(enableAuth = true) {
+    if (!newToken || newToken.length < 12) {
+      setError('Admin token must be at least 12 characters long.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const data = await apiRequest('/api/auth/bootstrap', {
+        method: 'POST',
+        body: JSON.stringify({ admin_token: newToken, current_token: currentToken || null, enable_auth: enableAuth })
+      });
+      setStoredAdminToken(newToken);
+      setToken(newToken);
+      setCurrentToken(newToken);
+      setNewToken('');
+      setStatus((current) => ({ ...(current || {}), auth: data.status }));
+      await refreshSecurity();
+      notify(data.message || 'Admin token saved');
+    } catch (error) {
+      setError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function verifyStoredToken() {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await apiRequest('/api/auth/verify', { method: 'POST', body: JSON.stringify({ admin_token: token || null }) });
+      notify(data.message || 'Token accepted');
+      await refreshSecurity();
+    } catch (error) {
+      setError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function setProtection(enabled) {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await apiRequest('/api/auth/enabled', { method: 'POST', body: JSON.stringify({ enabled, current_token: currentToken || token || null }) });
+      notify(data.message || (enabled ? 'API protection enabled' : 'API protection disabled'));
+      await refreshSecurity();
+    } catch (error) {
+      setError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function rememberToken() {
+    setStoredAdminToken(token);
+    setCurrentToken(token);
+    notify(token ? 'Token saved in this browser.' : 'Token cleared from this browser.');
+  }
+
+  const auth = status?.auth;
+  const limit = status?.rate_limit;
+
+  return (
+    <section id="security" className="panel slim-panel security-panel">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Security</p>
+          <h2>API token and rate limits</h2>
+          <p className="muted">Keep it open on a private home network, or enable a simple bearer token before sharing the API with other devices.</p>
+        </div>
+        <StatusPill ok={!auth?.required} text={auth?.required ? 'Token required' : 'Open / LAN mode'} />
+      </div>
+
+      <div className="security-grid">
+        <div className="summary-card">
+          <h3>Current protection</h3>
+          <div className="detail-list">
+            <span>Auth</span><strong>{auth?.enabled ? 'Enabled' : 'Disabled'}</strong>
+            <span>Token</span><strong>{auth?.token_configured ? 'Configured' : 'Not created'}</strong>
+            <span>Source</span><strong>{auth?.source || 'unknown'}</strong>
+            <span>Rate limit</span><strong>{limit?.enabled ? 'Enabled' : 'Disabled'}</strong>
+            <span>Read limit</span><strong>{limit ? `${limit.read_per_minute}/min` : 'N/A'}</strong>
+            <span>Write limit</span><strong>{limit ? `${limit.write_per_minute}/min` : 'N/A'}</strong>
+            <span>Auto_Pop starts</span><strong>{limit ? `${limit.autopop_jobs_per_hour}/hour` : 'N/A'}</strong>
+          </div>
+          <button className="secondary" type="button" onClick={refreshSecurity}>Refresh security status</button>
+        </div>
+
+        <div className="summary-card">
+          <h3>Browser token</h3>
+          <p className="hint">This token is stored only in this browser and is sent as Authorization: Bearer for API calls.</p>
+          <label>Current / stored token<input type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="Paste admin token here" /></label>
+          <div className="button-row setup-actions">
+            <button className="secondary" type="button" onClick={rememberToken}>Save token in browser</button>
+            <button className="secondary" type="button" onClick={verifyStoredToken}>Verify token</button>
+            <button className="secondary" type="button" onClick={() => { setToken(''); setStoredAdminToken(''); notify('Token cleared from this browser.'); }}>Clear browser token</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="advanced-box form-grid compact">
+        <h3>Create or rotate admin token</h3>
+        <p className="hint">Use a long random phrase. If protection is already enabled, provide the current token first.</p>
+        <div className="mini-columns">
+          <label>New admin token<input type="password" value={newToken} onChange={(event) => setNewToken(event.target.value)} placeholder="At least 12 characters" /></label>
+          <label>Current token, if already protected<input type="password" value={currentToken} onChange={(event) => setCurrentToken(event.target.value)} placeholder="Current token" /></label>
+        </div>
+        <div className="button-row setup-actions">
+          <button type="button" onClick={() => saveToken(true)}>Save token + enable protection</button>
+          <button className="secondary" type="button" onClick={() => saveToken(false)}>Save token only</button>
+          <button className="secondary" type="button" disabled={!auth?.token_configured} onClick={() => setProtection(true)}>Enable protection</button>
+          <button className="secondary" type="button" onClick={() => setProtection(false)}>Disable runtime protection</button>
+        </div>
+        {auth?.env_forced_enabled && <div className="notice warning small">EOX_AUTH_ENABLED=true is set in Docker/environment, so disabling from the GUI cannot fully turn protection off until the environment is changed.</div>}
+      </div>
     </section>
   );
 }
@@ -764,6 +1037,7 @@ function HelpGuidePanel() {
     ['Cisco table viewer', 'Shows saved evidence from Cisco announcement pages. It uses REST and loads a bounded number of rows.'],
     ['Reports', 'Export CSV/XLSX. Pick recommended fields for common users or select Cisco table columns when needed.'],
     ['Snapshot', 'Shows DB counts. Click Refresh after long jobs if the tile has not updated automatically.'],
+    ['Security', 'Optional admin token protection is useful when other people or scripts can reach your API. Rate limits protect the small server from accidental loops.'],
   ];
   return (
     <section id="guide" className="panel guide-panel">
@@ -782,6 +1056,7 @@ function DashboardNav() {
     ['Snapshot', '#snapshot'],
     ['Lookup', '#lookup'],
     ['Auto_Pop', '#autopop'],
+    ['Security', '#security'],
     ['Evidence', '#evidence'],
     ['Browse', '#browse'],
     ['Reports', '#reports'],
@@ -858,6 +1133,7 @@ export default function App() {
       <section className="grid two-columns"><DatabaseSetupCard setup={setup} refreshSetup={refreshSetup} refreshStats={refreshStats} notify={notify} setError={setError} setLoading={setLoading} /><StatsPanel stats={stats} refreshStats={refreshStats} /></section>
       <SearchPanel refreshStats={refreshStats} notify={notify} setError={setError} setLoading={setLoading} setEvidencePid={setEvidencePid} />
       <section className="grid two-columns"><AutoPopPanel setup={setup} refreshStats={refreshStats} notify={notify} setError={setError} /><OptionalApiCard setup={setup} refreshSetup={refreshSetup} notify={notify} setError={setError} setLoading={setLoading} /></section>
+      <SecurityPanel notify={notify} setError={setError} setLoading={setLoading} />
       <EvidencePanel pid={evidencePid} setPid={setEvidencePid} setError={setError} />
       <DatabaseExplorer setError={setError} setEvidencePid={setEvidencePid} />
       <ExportPanel notify={notify} setError={setError} />

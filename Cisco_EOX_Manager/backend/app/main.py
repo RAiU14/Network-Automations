@@ -7,12 +7,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.routes_auth import router as auth_router
 from app.api.routes_autopop import router as autopop_router
 from app.api.routes_eox import router as eox_router
 from app.api.routes_export import router as export_router
 from app.api.routes_logs import router as logs_router
 from app.api.routes_setup import router as setup_router
+from app.core.auth import AdminAuthMiddleware
 from app.core.config import get_settings
+from app.core.rate_limit import RateLimitMiddleware
 from app.core.logging import RequestLoggingMiddleware, get_logger
 from app.db.session import check_db_connection, init_db
 from app.services.autopop_jobs import mark_stale_jobs
@@ -32,9 +35,12 @@ app = FastAPI(
 )
 
 app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(AdminAuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
+    allow_origin_regex=settings.cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -66,6 +72,7 @@ def api_health() -> HealthResponse:
     return HealthResponse(database_ready=ready, database_error=error)
 
 
+app.include_router(auth_router, prefix=settings.api_prefix)
 app.include_router(autopop_router, prefix=settings.api_prefix)
 app.include_router(setup_router, prefix=settings.api_prefix)
 app.include_router(eox_router, prefix=settings.api_prefix)

@@ -54,6 +54,42 @@ class DatabaseSetupResponse(BaseModel):
     env_file: str | None = None
 
 
+
+
+class PostgresDefaultsResponse(BaseModel):
+    host: str = "postgres"
+    port: int = 5432
+    host_port: int = 5433
+    database: str = "eox_cache"
+    username: str = "eox_user"
+    password: str = "eox_password"
+    internal_url_hint: str = "postgresql+psycopg://eox_user:****@postgres:5432/eox_cache"
+    host_url_hint: str = "postgresql+psycopg://eox_user:****@127.0.0.1:5433/eox_cache"
+    notes: list[str] = Field(default_factory=list)
+
+
+class PostgresBootstrapRequest(BaseModel):
+    host: str = "postgres"
+    port: int = Field(5432, ge=1, le=65535)
+    database: str = Field("eox_cache", min_length=1, max_length=63)
+    username: str = Field("eox_user", min_length=1)
+    password: str = "eox_password"
+    maintenance_database: str = Field("postgres", min_length=1, max_length=63)
+    create_database: bool = True
+    initialize_tables: bool = True
+    save_as_active: bool = True
+    write_env_file: bool = True
+    test_only: bool = False
+
+
+class PostgresBootstrapResponse(DatabaseSetupResponse):
+    database_created: bool = False
+    database_existed: bool = False
+    tables_initialized: bool = False
+    active_database_saved: bool = False
+    database_name: str = ""
+
+
 class CiscoSetupRequest(BaseModel):
     client_id: str | None = Field(None, description="Cisco API client ID")
     client_secret: str | None = Field(None, description="Cisco API client secret")

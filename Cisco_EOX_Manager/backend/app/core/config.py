@@ -20,6 +20,13 @@ def _csv_env(name: str, default: str) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def _str_env(name: str, default: str | None = None) -> str | None:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip()
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str = os.getenv("EOX_APP_NAME", "Cisco EOX Manager")
@@ -45,6 +52,7 @@ class Settings:
     user_agent: str = os.getenv("EOX_USER_AGENT", "Cisco-EOX-Manager/1.0")
 
     cors_origins: list[str] = None  # type: ignore[assignment]
+    cors_origin_regex: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -52,8 +60,13 @@ class Settings:
             "cors_origins",
             _csv_env(
                 "EOX_CORS_ORIGINS",
-                "http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:3000,http://localhost:3000",
+                "http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174,http://127.0.0.1:3000,http://localhost:3000",
             ),
+        )
+        object.__setattr__(
+            self,
+            "cors_origin_regex",
+            _str_env("EOX_CORS_ORIGIN_REGEX", r"^https?://([^/:]+)(:5173|:5174)"),
         )
 
 

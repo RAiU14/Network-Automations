@@ -303,3 +303,29 @@ td { max-width: 360px; word-break: break-word; }
   .hero h1 { font-size: 2.1rem; }
   .dashboard-nav a { font-size: 0.84rem; padding: 8px 10px; }
 }
+
+.starter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  margin: 14px 0 8px;
+  padding: 14px;
+  border-radius: 18px;
+  background: #eef8ff;
+  border: 1px solid #cfe6fb;
+}
+.setup-hint { margin: 0 0 12px; }
+.setup-actions { margin-top: 12px; }
+.postgres-help { line-height: 1.45; }
+
+.security-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 14px;
+}
+.security-panel .detail-list { margin-bottom: 14px; }
+
+@media (max-width: 900px) {
+  .security-grid { grid-template-columns: 1fr; }
+}

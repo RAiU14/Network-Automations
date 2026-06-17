@@ -8,6 +8,27 @@ export const API_BASE_URL = rawConfiguredApiBaseUrl && !(configuredLooksLocal &&
   ? rawConfiguredApiBaseUrl
   : inferredApiBaseUrl;
 
+export const ADMIN_TOKEN_STORAGE_KEY = 'cisco_eox_admin_token';
+
+export function getStoredAdminToken() {
+  try { return localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) || ''; } catch (_error) { return ''; }
+}
+
+export function setStoredAdminToken(token) {
+  try {
+    if (token) localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, token);
+    else localStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
+  } catch (_error) {
+    return null;
+  }
+  return token || '';
+}
+
+function authHeaders() {
+  const token = getStoredAdminToken();
+  return token ? { 'Authorization': `Bearer ${token}`, 'X-EOX-Admin-Token': token } : {};
+}
+
 export function formatApiError(payload, fallback = 'Request failed') {
   if (!payload) return fallback;
   if (typeof payload === 'string') return payload || fallback;
@@ -36,6 +57,7 @@ export async function apiRequest(path, options = {}) {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...authHeaders(),
       ...(options.headers || {})
     }
   });
@@ -73,7 +95,7 @@ export async function downloadExport(dataset, format, search = '', limit = 10000
   if (!includeAll) {
     fields.forEach((field) => params.append('fields', field));
   }
-  const response = await fetch(`${API_BASE_URL}/api/export/${dataset}?${params.toString()}`);
+  const response = await fetch(`${API_BASE_URL}/api/export/${dataset}?${params.toString()}`, { headers: authHeaders() });
   if (!response.ok) {
     const contentType = response.headers.get('content-type') || '';
     const payload = contentType.includes('application/json') ? await response.json() : await response.text();
