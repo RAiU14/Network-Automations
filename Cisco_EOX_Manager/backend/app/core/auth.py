@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Literal
 
 from fastapi import HTTPException, Request, status
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -14,10 +14,14 @@ from starlette.responses import JSONResponse
 
 from app.core.config import get_settings
 
+TokenRole = Literal["admin", "read"]
+
 
 @dataclass(frozen=True)
 class AuthStatus:
     enabled: bool
+    admin_token_configured: bool
+    read_token_configured: bool
     token_configured: bool
     required: bool
     source: str
@@ -32,11 +36,13 @@ PROTECTED_PREFIXES = (
     "/api/logs",
     "/api/export",
     "/api/autopop",
+    "/api/system",
     "/graphql",
 )
 
 OPEN_PATHS = (
     "/api/auth/status",
+    "/api/auth/security-status",
     "/api/auth/bootstrap",
     "/api/auth/verify",
     "/api/setup/status",
@@ -45,6 +51,19 @@ OPEN_PATHS = (
     "/docs",
     "/redoc",
     "/openapi.json",
+)
+
+READ_POST_PATHS = (
+    "/api/eox/lookup",
+    "/graphql",
+)
+
+ADMIN_PREFIXES = (
+    "/api/setup",
+    "/api/auth",
+    "/api/logs/frontend",
+    "/api/system/maintenance",
+    "/api/system/backups",
 )
 
 
@@ -82,22 +101,31 @@ def _env_truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _configured_hash() -> tuple[str | None, str, str | None]:
-    if os.getenv("EOX_ADMIN_TOKEN_HASH"):
-        return os.getenv("EOX_ADMIN_TOKEN_HASH"), "environment-hash", None
+def _configured_hashes() -> tuple[str | None, str | None, str, str | None]:
+    admin_hash = os.getenv("EOX_ADMIN_TOKEN_HASH")
+    read_hash = os.getenv("EOX_READ_TOKEN_HASH")
+    source = "environment-hash" if admin_hash or read_hash else "not-configured"
+    updated_at = None
+
     if os.getenv("EOX_ADMIN_TOKEN"):
-        return _hash_token(os.getenv("EOX_ADMIN_TOKEN", "")), "environment-token", None
+        admin_hash = _hash_token(os.getenv("EOX_ADMIN_TOKEN", ""))
+        source = "environment-token"
+    if os.getenv("EOX_READ_TOKEN"):
+        read_hash = _hash_token(os.getenv("EOX_READ_TOKEN", ""))
+        source = "environment-token"
+
     path = auth_config_path()
     values = _parse_env_file(path)
-    if values.get("EOX_ADMIN_TOKEN_HASH"):
-        return values["EOX_ADMIN_TOKEN_HASH"], "runtime-auth-file", values.get("EOX_AUTH_UPDATED_AT")
-    return None, "not-configured", None
+    if values.get("EOX_ADMIN_TOKEN_HASH") or values.get("EOX_READ_TOKEN_HASH"):
+        admin_hash = admin_hash or values.get("EOX_ADMIN_TOKEN_HASH")
+        read_hash = read_hash or values.get("EOX_READ_TOKEN_HASH")
+        source = "runtime-auth-file"
+        updated_at = values.get("EOX_AUTH_UPDATED_AT")
+
+    return admin_hash, read_hash, source, updated_at
 
 
 def auth_enabled() -> bool:
-    # Environment true is a hard-enable for deployments that want immutable
-    # protection. A runtime auth file can also enable auth from the GUI even
-    # when docker-compose defaulted EOX_AUTH_ENABLED=false.
     if _env_truthy(os.getenv("EOX_AUTH_ENABLED")):
         return True
     values = _parse_env_file(auth_config_path())
@@ -105,12 +133,16 @@ def auth_enabled() -> bool:
 
 
 def get_auth_status() -> AuthStatus:
-    token_hash, source, updated_at = _configured_hash()
+    admin_hash, read_hash, source, updated_at = _configured_hashes()
     enabled = auth_enabled()
-    token_configured = bool(token_hash)
-    bootstrap_open = enabled and not token_configured
+    admin_configured = bool(admin_hash)
+    read_configured = bool(read_hash)
+    token_configured = admin_configured or read_configured
+    bootstrap_open = enabled and not admin_configured
     return AuthStatus(
         enabled=enabled,
+        admin_token_configured=admin_configured,
+        read_token_configured=read_configured,
         token_configured=token_configured,
         required=enabled and token_configured,
         source=source,
@@ -120,21 +152,29 @@ def get_auth_status() -> AuthStatus:
     )
 
 
-def save_admin_token(token: str, *, enable_auth: bool = True) -> AuthStatus:
+def _save_token_hash(*, token: str, role: TokenRole, enable_auth: bool | None = None) -> AuthStatus:
     clean = (token or "").strip()
     if len(clean) < 12:
-        raise ValueError("Admin token must be at least 12 characters long")
+        raise ValueError(f"{role.title()} token must be at least 12 characters long")
     path = auth_config_path()
-    updated_at = datetime.now(timezone.utc).isoformat()
-    _write_env_file(
-        path,
-        {
-            "EOX_AUTH_UPDATED_AT": updated_at,
-            "EOX_AUTH_ENABLED": "true" if enable_auth else "false",
-            "EOX_ADMIN_TOKEN_HASH": _hash_token(clean),
-        },
-    )
+    values = _parse_env_file(path)
+    values["EOX_AUTH_UPDATED_AT"] = datetime.now(timezone.utc).isoformat()
+    if enable_auth is not None:
+        values["EOX_AUTH_ENABLED"] = "true" if enable_auth else "false"
+    elif "EOX_AUTH_ENABLED" not in values:
+        values["EOX_AUTH_ENABLED"] = "true"
+    key = "EOX_ADMIN_TOKEN_HASH" if role == "admin" else "EOX_READ_TOKEN_HASH"
+    values[key] = _hash_token(clean)
+    _write_env_file(path, values)
     return get_auth_status()
+
+
+def save_admin_token(token: str, *, enable_auth: bool = True) -> AuthStatus:
+    return _save_token_hash(token=token, role="admin", enable_auth=enable_auth)
+
+
+def save_read_token(token: str, *, enable_auth: bool | None = None) -> AuthStatus:
+    return _save_token_hash(token=token, role="read", enable_auth=enable_auth)
 
 
 def set_runtime_auth_enabled(enabled: bool) -> AuthStatus:
@@ -150,22 +190,33 @@ def extract_token(request: Request) -> str | None:
     auth_header = request.headers.get("authorization") or ""
     if auth_header.lower().startswith("bearer "):
         return auth_header.split(" ", 1)[1].strip()
-    header_token = request.headers.get("x-eox-admin-token")
-    if header_token:
-        return header_token.strip()
+    return (
+        request.headers.get("x-eox-admin-token")
+        or request.headers.get("x-eox-read-token")
+        or request.headers.get("x-eox-api-token")
+        or None
+    )
+
+
+def token_role(token: str | None) -> TokenRole | None:
+    status_data = get_auth_status()
+    if not status_data.enabled:
+        return "admin"
+    admin_hash, read_hash, _source, _updated_at = _configured_hashes()
+    if not admin_hash and not read_hash:
+        return "admin"
+    if not token:
+        return None
+    token_hash = _hash_token(token.strip())
+    if admin_hash and hmac.compare_digest(token_hash, admin_hash):
+        return "admin"
+    if read_hash and hmac.compare_digest(token_hash, read_hash):
+        return "read"
     return None
 
 
 def verify_token(token: str | None) -> bool:
-    status_data = get_auth_status()
-    if not status_data.enabled:
-        return True
-    token_hash, _source, _updated_at = _configured_hash()
-    if not token_hash:
-        return True
-    if not token:
-        return False
-    return hmac.compare_digest(_hash_token(token.strip()), token_hash)
+    return token_role(token) is not None
 
 
 def is_open_path(path: str, open_paths: Iterable[str] = OPEN_PATHS) -> bool:
@@ -176,8 +227,30 @@ def is_protected_path(path: str, protected_prefixes: Iterable[str] = PROTECTED_P
     return any(path == item or path.startswith(f"{item}/") for item in protected_prefixes)
 
 
+def _is_admin_required(path: str, method: str) -> bool:
+    if path.startswith("/api/autopop") and method.upper() != "GET":
+        return True
+    if path.startswith("/api/export") and method.upper() not in {"GET", "HEAD"}:
+        return True
+    if any(path == item or path.startswith(f"{item}/") for item in ADMIN_PREFIXES):
+        return True
+    if method.upper() in {"POST", "PUT", "PATCH", "DELETE"} and path not in READ_POST_PATHS:
+        return True
+    return False
+
+
+def has_permission(role: TokenRole | None, path: str, method: str) -> bool:
+    if role == "admin":
+        return True
+    if role == "read":
+        if _is_admin_required(path, method):
+            return False
+        return method.upper() in {"GET", "HEAD"} or path in READ_POST_PATHS
+    return False
+
+
 async def require_admin(request: Request) -> None:
-    if not verify_token(extract_token(request)):
+    if token_role(extract_token(request)) != "admin":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin token required")
 
 
@@ -188,12 +261,18 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         if is_open_path(path) or not is_protected_path(path):
             return await call_next(request)
-        if verify_token(extract_token(request)):
-            return await call_next(request)
+        role = token_role(extract_token(request))
+        if has_permission(role, path, request.method):
+            response = await call_next(request)
+            if role:
+                response.headers.setdefault("X-EOX-Token-Role", role)
+            return response
+        required = "admin" if _is_admin_required(path, request.method) else "read or admin"
         return JSONResponse(
             {
-                "detail": "Admin token required. Open Security in the GUI or send Authorization: Bearer <token> / X-EOX-Admin-Token.",
+                "detail": f"{required.title()} token required. Send Authorization: Bearer <token>.",
                 "auth_required": True,
+                "required_role": required,
             },
             status_code=status.HTTP_401_UNAUTHORIZED,
         )

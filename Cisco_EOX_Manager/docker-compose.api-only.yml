@@ -1,0 +1,6 @@
+# API-only deployment helper. Use with:
+#   docker compose -f docker-compose.yml -f docker-compose.api-only.yml up -d --build
+# This keeps frontend out of the deployment while running postgres + api.
+services:
+  frontend:
+    profiles: ["gui"]

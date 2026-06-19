@@ -9,6 +9,7 @@ export const API_BASE_URL = rawConfiguredApiBaseUrl && !(configuredLooksLocal &&
   : inferredApiBaseUrl;
 
 export const ADMIN_TOKEN_STORAGE_KEY = 'cisco_eox_admin_token';
+export const READ_TOKEN_STORAGE_KEY = 'cisco_eox_read_token';
 
 export function getStoredAdminToken() {
   try { return localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) || ''; } catch (_error) { return ''; }
@@ -24,9 +25,28 @@ export function setStoredAdminToken(token) {
   return token || '';
 }
 
+export function getStoredReadToken() {
+  try { return localStorage.getItem(READ_TOKEN_STORAGE_KEY) || ''; } catch (_error) { return ''; }
+}
+
+export function setStoredReadToken(token) {
+  try {
+    if (token) localStorage.setItem(READ_TOKEN_STORAGE_KEY, token);
+    else localStorage.removeItem(READ_TOKEN_STORAGE_KEY);
+  } catch (_error) {
+    return null;
+  }
+  return token || '';
+}
+
 function authHeaders() {
-  const token = getStoredAdminToken();
-  return token ? { 'Authorization': `Bearer ${token}`, 'X-EOX-Admin-Token': token } : {};
+  const adminToken = getStoredAdminToken();
+  const readToken = getStoredReadToken();
+  const token = adminToken || readToken;
+  const headers = token ? { 'Authorization': `Bearer ${token}`, 'X-EOX-API-Token': token } : {};
+  if (adminToken) headers['X-EOX-Admin-Token'] = adminToken;
+  if (!adminToken && readToken) headers['X-EOX-Read-Token'] = readToken;
+  return headers;
 }
 
 export function formatApiError(payload, fallback = 'Request failed') {

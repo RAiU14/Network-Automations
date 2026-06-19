@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { API_BASE_URL, apiRequest, downloadExport, getExportOptions, getProductEvidence, getStoredAdminToken, graphqlRequest, logFrontendEvent, parsePids, setStoredAdminToken } from './api.js';
+import { API_BASE_URL, apiRequest, downloadExport, getExportOptions, getProductEvidence, getStoredAdminToken, getStoredReadToken, graphqlRequest, logFrontendEvent, parsePids, setStoredAdminToken, setStoredReadToken } from './api.js';
 
 const samplePids = ['AIR-CT5520-K9', 'C9300-24T'];
 const datasets = ['eox_report', 'products', 'affected_products', 'announcements', 'pid_catalog', 'checkpoints', 'system_events'];
@@ -334,6 +334,8 @@ function SecurityPanel({ notify, setError, setLoading }) {
   const [status, setStatus] = useState(null);
   const [token, setToken] = useState(getStoredAdminToken());
   const [newToken, setNewToken] = useState('');
+  const [readToken, setReadToken] = useState(getStoredReadToken());
+  const [newReadToken, setNewReadToken] = useState('');
   const [currentToken, setCurrentToken] = useState(getStoredAdminToken());
 
   async function refreshSecurity() {
@@ -375,11 +377,36 @@ function SecurityPanel({ notify, setError, setLoading }) {
     }
   }
 
+  async function saveReadToken() {
+    if (!newReadToken || newReadToken.length < 12) {
+      setError('Read-only token must be at least 12 characters long.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const data = await apiRequest('/api/auth/read-token', {
+        method: 'POST',
+        body: JSON.stringify({ read_token: newReadToken, current_token: currentToken || token || null, enable_auth: true })
+      });
+      setStoredReadToken(newReadToken);
+      setReadToken(newReadToken);
+      setNewReadToken('');
+      setStatus((current) => ({ ...(current || {}), auth: data.status }));
+      await refreshSecurity();
+      notify(data.message || 'Read-only token saved');
+    } catch (error) {
+      setError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function verifyStoredToken() {
     setLoading(true);
     setError('');
     try {
-      const data = await apiRequest('/api/auth/verify', { method: 'POST', body: JSON.stringify({ admin_token: token || null }) });
+      const data = await apiRequest('/api/auth/verify', { method: 'POST', body: JSON.stringify({ api_token: token || readToken || null }) });
       notify(data.message || 'Token accepted');
       await refreshSecurity();
     } catch (error) {
@@ -406,7 +433,8 @@ function SecurityPanel({ notify, setError, setLoading }) {
   function rememberToken() {
     setStoredAdminToken(token);
     setCurrentToken(token);
-    notify(token ? 'Token saved in this browser.' : 'Token cleared from this browser.');
+    setStoredReadToken(readToken);
+    notify((token || readToken) ? 'Token saved in this browser.' : 'Token cleared from this browser.');
   }
 
   const auth = status?.auth;
@@ -428,7 +456,8 @@ function SecurityPanel({ notify, setError, setLoading }) {
           <h3>Current protection</h3>
           <div className="detail-list">
             <span>Auth</span><strong>{auth?.enabled ? 'Enabled' : 'Disabled'}</strong>
-            <span>Token</span><strong>{auth?.token_configured ? 'Configured' : 'Not created'}</strong>
+            <span>Admin token</span><strong>{auth?.admin_token_configured ? 'Configured' : 'Not created'}</strong>
+            <span>Read token</span><strong>{auth?.read_token_configured ? 'Configured' : 'Not created'}</strong>
             <span>Source</span><strong>{auth?.source || 'unknown'}</strong>
             <span>Rate limit</span><strong>{limit?.enabled ? 'Enabled' : 'Disabled'}</strong>
             <span>Read limit</span><strong>{limit ? `${limit.read_per_minute}/min` : 'N/A'}</strong>
@@ -441,11 +470,12 @@ function SecurityPanel({ notify, setError, setLoading }) {
         <div className="summary-card">
           <h3>Browser token</h3>
           <p className="hint">This token is stored only in this browser and is sent as Authorization: Bearer for API calls.</p>
-          <label>Current / stored token<input type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="Paste admin token here" /></label>
+          <label>Admin token<input type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="Paste admin token here" /></label>
+          <label>Read-only token<input type="password" value={readToken} onChange={(event) => setReadToken(event.target.value)} placeholder="Paste read-only token here" /></label>
           <div className="button-row setup-actions">
             <button className="secondary" type="button" onClick={rememberToken}>Save token in browser</button>
             <button className="secondary" type="button" onClick={verifyStoredToken}>Verify token</button>
-            <button className="secondary" type="button" onClick={() => { setToken(''); setStoredAdminToken(''); notify('Token cleared from this browser.'); }}>Clear browser token</button>
+            <button className="secondary" type="button" onClick={() => { setToken(''); setReadToken(''); setStoredAdminToken(''); setStoredReadToken(''); notify('Tokens cleared from this browser.'); }}>Clear browser tokens</button>
           </div>
         </div>
       </div>
@@ -463,6 +493,11 @@ function SecurityPanel({ notify, setError, setLoading }) {
           <button className="secondary" type="button" disabled={!auth?.token_configured} onClick={() => setProtection(true)}>Enable protection</button>
           <button className="secondary" type="button" onClick={() => setProtection(false)}>Disable runtime protection</button>
         </div>
+        <div className="mini-columns">
+          <label>New read-only token<input type="password" value={newReadToken} onChange={(event) => setNewReadToken(event.target.value)} placeholder="For lookup/report integrations" /></label>
+          <div className="button-row setup-actions"><button className="secondary" type="button" onClick={saveReadToken}>Save read-only token</button></div>
+        </div>
+        <p className="hint">Read-only tokens can call lookup, stats, evidence, exports, and GraphQL read queries. Admin tokens are required for setup, backups, maintenance, and Auto_Pop control.</p>
         {auth?.env_forced_enabled && <div className="notice warning small">EOX_AUTH_ENABLED=true is set in Docker/environment, so disabling from the GUI cannot fully turn protection off until the environment is changed.</div>}
       </div>
     </section>
@@ -618,7 +653,26 @@ function ResultCards({ results, onEvidence }) {
 function AutoPopPanel({ setup, refreshStats, notify, setError }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [jobs, setJobs] = useState([]);
+  const [jobLog, setJobLog] = useState(null);
+  const [capabilities, setCapabilities] = useState(null);
   const [options, setOptions] = useState(DEFAULT_AUTOPOP_OPTIONS);
+
+  async function refreshCapabilities(applyRecommended = false) {
+    try {
+      const data = await apiRequest('/api/system/capabilities');
+      setCapabilities(data);
+      if (applyRecommended) {
+        setOptions((current) => ({
+          ...current,
+          parse_workers: data?.recommended_workers?.optimal || current.parse_workers,
+          delay: data?.recommended_delay ?? current.delay,
+          category_break: data?.recommended_category_break ?? current.category_break
+        }));
+      }
+    } catch (_error) {
+      return null;
+    }
+  }
 
   async function refreshJobs() {
     try {
@@ -661,6 +715,7 @@ function AutoPopPanel({ setup, refreshStats, notify, setError }) {
       const data = await apiRequest('/api/autopop/jobs', { method: 'POST', body: JSON.stringify(payload) });
       notify(`Auto_Pop job #${data.id} started${notes.length ? ` (${notes.join(', ')})` : ''}`);
       await refreshJobs();
+      if (runningJob?.id) await loadJobLog(runningJob.id);
       await refreshStats();
     } catch (error) {
       setError(error.message);
@@ -678,6 +733,38 @@ function AutoPopPanel({ setup, refreshStats, notify, setError }) {
     }
   }
 
+  async function pauseJob(id) {
+    setError('');
+    try {
+      await apiRequest(`/api/autopop/jobs/${id}/pause`, { method: 'POST' });
+      notify(`Auto_Pop job #${id} pause requested`);
+      await refreshJobs();
+    } catch (error) {
+      setError(error.message);
+    }
+  }
+
+  async function resumeJob(id) {
+    setError('');
+    try {
+      await apiRequest(`/api/autopop/jobs/${id}/resume`, { method: 'POST' });
+      notify(`Auto_Pop job #${id} resume requested`);
+      await refreshJobs();
+    } catch (error) {
+      setError(error.message);
+    }
+  }
+
+  async function loadJobLog(id) {
+    setError('');
+    try {
+      const data = await apiRequest(`/api/autopop/jobs/${id}/log?lines=160`);
+      setJobLog(data);
+    } catch (error) {
+      setError(error.message);
+    }
+  }
+
   async function clearJobs() {
     setError('');
     try {
@@ -690,7 +777,7 @@ function AutoPopPanel({ setup, refreshStats, notify, setError }) {
     }
   }
 
-  useEffect(() => { refreshJobs(); }, []);
+  useEffect(() => { refreshJobs(); refreshCapabilities(true); }, []);
 
   useEffect(() => {
     if (!jobs.some((job) => ['queued', 'running', 'cancel_requested'].includes(job.status))) return undefined;
@@ -714,8 +801,10 @@ function AutoPopPanel({ setup, refreshStats, notify, setError }) {
         <div className="button-row panel-actions"><button className="secondary" type="button" onClick={refreshJobs}>Refresh</button><button className="secondary" type="button" onClick={clearJobs}>Clear old jobs</button></div>
       </div>
       {runningJob && <div className="inline-status"><strong>Running:</strong> job #{runningJob.id} · {runningJob.status}. This section refreshes every 5 seconds.</div>}
+      {capabilities && <div className="inline-status"><strong>Recommended for this server:</strong> {capabilities.database_type} · workers {capabilities.recommended_workers?.optimal} · delay {capabilities.recommended_delay}s · break {capabilities.recommended_category_break}s</div>}
       <div className="button-row">
         <button type="button" disabled={!setup?.database_ready} onClick={() => startJob(false)}>Start Auto_Pop</button>
+        <button className="secondary" type="button" onClick={() => refreshCapabilities(true)}>Use recommended for this server</button>
         <button className="secondary" type="button" onClick={() => setOptions(DEFAULT_AUTOPOP_OPTIONS)}>Use full-crawl defaults</button>
         <button className="secondary" type="button" onClick={() => setShowAdvanced(!showAdvanced)}>{showAdvanced ? 'Hide options' : 'Advanced options'}</button>
       </div>
@@ -732,7 +821,8 @@ function AutoPopPanel({ setup, refreshStats, notify, setError }) {
           <div className="option-note">For a weak server: workers 4, delay 5, category break 60 is a strong long-running setting.</div>
         </div>
       )}
-      <SimpleTable rows={jobs} columns={['id', 'status', 'processId', 'returnCode', 'createdAt', 'startedAt', 'finishedAt', 'lastError']} actions={(row) => ['running', 'queued'].includes(row.status) ? <button className="secondary small-button" type="button" onClick={() => cancelJob(row.id)}>Cancel</button> : null} />
+      <SimpleTable rows={jobs} columns={['id', 'status', 'processId', 'returnCode', 'createdAt', 'startedAt', 'finishedAt', 'lastError']} actions={(row) => <span className="button-row compact-actions"><button className="secondary small-button" type="button" onClick={() => loadJobLog(row.id)}>Log</button>{['running'].includes(row.status) && <button className="secondary small-button" type="button" onClick={() => pauseJob(row.id)}>Pause</button>}{['paused','pause_requested'].includes(row.status) && <button className="secondary small-button" type="button" onClick={() => resumeJob(row.id)}>Resume</button>}{['running','queued','paused','pause_requested','resume_requested'].includes(row.status) && <button className="secondary small-button" type="button" onClick={() => cancelJob(row.id)}>Cancel</button>}</span>} />
+      {jobLog && <div className="log-panel"><h3>Job #{jobLog.job_id} log</h3><p className="hint">Category: {nvl(jobLog.current_category)} · Series: {nvl(jobLog.current_series)}</p><pre>{(jobLog.lines || []).join('\n')}</pre></div>}
     </section>
   );
 }
@@ -1027,6 +1117,110 @@ function StatsPanel({ stats, refreshStats }) {
   );
 }
 
+
+function DatabaseHealthPanel({ notify, setError, setLoading }) {
+  const [health, setHealth] = useState(null);
+  const [backups, setBackups] = useState([]);
+
+  async function refreshHealth() {
+    setError('');
+    try {
+      const data = await apiRequest('/api/system/database-health');
+      setHealth(data);
+    } catch (error) {
+      setError(error.message);
+    }
+  }
+
+  async function loadBackups() {
+    try {
+      const data = await apiRequest('/api/system/backups');
+      setBackups(data?.items || []);
+    } catch (_error) {
+      setBackups([]);
+    }
+  }
+
+  async function createBackup() {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await apiRequest('/api/system/backups', { method: 'POST', body: JSON.stringify({}) });
+      notify(data.message || 'Backup created');
+      await loadBackups();
+      await refreshHealth();
+    } catch (error) {
+      setError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function runMaintenance(kind) {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await apiRequest(`/api/system/maintenance/${kind}`, { method: 'POST', body: JSON.stringify({}) });
+      notify(data.message || `${kind} completed`);
+      await refreshHealth();
+    } catch (error) {
+      setError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { refreshHealth(); loadBackups(); }, []);
+
+  const counts = health?.table_counts || {};
+  const storageRows = health?.table_storage || [];
+  return (
+    <section id="db-health" className="panel wide-panel db-health-panel">
+      <div className="panel-heading"><div><p className="eyebrow">Database health</p><h2>Storage, metadata, and maintenance</h2><p className="muted">See database size, table sizes, last update time, backups, and maintenance actions.</p></div><button className="secondary" type="button" onClick={() => { refreshHealth(); loadBackups(); }}>Refresh</button></div>
+      {health && <div className="stats-grid compact-stats">
+        <div className="stat-card"><span>DB type</span><strong>{health.database_type}</strong></div>
+        <div className="stat-card"><span>DB size</span><strong>{health.database_size_mb ?? 'N/A'} MB</strong></div>
+        <div className="stat-card"><span>Last updated</span><strong>{health.last_updated_at ? new Date(health.last_updated_at).toLocaleString() : 'N/A'}</strong></div>
+        <div className="stat-card"><span>Disk free</span><strong>{health.disk_free_gb ?? 'N/A'} GB</strong></div>
+        <div className="stat-card"><span>Products</span><strong>{counts.product_eox ?? 0}</strong></div>
+        <div className="stat-card"><span>Affected rows</span><strong>{counts.eox_affected_products ?? 0}</strong></div>
+      </div>}
+      {health?.warnings?.length > 0 && <div className="notice warning small">{health.warnings.join(' ')}</div>}
+      <div className="button-row setup-actions">
+        <button className="secondary" type="button" onClick={() => runMaintenance('analyze')}>Analyze DB</button>
+        <button className="secondary" type="button" onClick={() => runMaintenance('vacuum')}>Vacuum DB</button>
+        <button className="secondary" type="button" onClick={createBackup}>Create backup</button>
+      </div>
+      <div className="grid two-columns nested-grid">
+        <div><h3>Largest tables / indexes</h3><SimpleTable rows={storageRows.slice(0, 10)} columns={['name', 'row_count', 'table_size_mb', 'index_size_mb', 'total_size_mb']} /></div>
+        <div><h3>Backups</h3><SimpleTable rows={backups.slice(0, 10)} columns={['file_name', 'database_type', 'size_mb', 'created_at']} actions={(row) => <a className="secondary small-button" href={`${API_BASE_URL}/api/system/backups/${encodeURIComponent(row.file_name)}/download`} target="_blank" rel="noreferrer">Download</a>} /></div>
+      </div>
+    </section>
+  );
+}
+
+function SystemCapabilitiesPanel({ setError }) {
+  const [capabilities, setCapabilities] = useState(null);
+  async function refresh() {
+    try { setCapabilities(await apiRequest('/api/system/capabilities')); } catch (error) { setError(error.message); }
+  }
+  useEffect(() => { refresh(); }, []);
+  return (
+    <section id="system" className="panel slim-panel system-panel">
+      <div className="panel-heading"><div><p className="eyebrow">System</p><h2>Capacity recommendations</h2><p className="muted">Auto_Pop recommendations based on CPU, memory, disk, and database type.</p></div><button className="secondary" type="button" onClick={refresh}>Refresh</button></div>
+      {capabilities && <div className="detail-list">
+        <span>CPU</span><strong>{capabilities.cpu_logical} logical core(s)</strong>
+        <span>Memory</span><strong>{capabilities.memory_available_gb ?? 'N/A'} GB available / {capabilities.memory_total_gb ?? 'N/A'} GB total</strong>
+        <span>Disk free</span><strong>{capabilities.disk_free_gb ?? 'N/A'} GB</strong>
+        <span>Database</span><strong>{capabilities.database_type}</strong>
+        <span>Workers</span><strong>low {capabilities.recommended_workers?.low}, recommended {capabilities.recommended_workers?.optimal}, aggressive {capabilities.recommended_workers?.aggressive}</strong>
+        <span>Delay</span><strong>{capabilities.recommended_delay}s</strong>
+      </div>}
+      {capabilities?.risk_notes?.length > 0 && <div className="notice warning small">{capabilities.risk_notes.join(' ')}</div>}
+    </section>
+  );
+}
+
 function HelpGuidePanel() {
   const [open, setOpen] = useState(false);
   const tips = [
@@ -1054,6 +1248,8 @@ function DashboardNav() {
   const items = [
     ['Setup', '#setup'],
     ['Snapshot', '#snapshot'],
+    ['DB Health', '#db-health'],
+    ['System', '#system'],
     ['Lookup', '#lookup'],
     ['Auto_Pop', '#autopop'],
     ['Security', '#security'],
@@ -1131,6 +1327,8 @@ export default function App() {
       <MessageBar error={error} message={message} loading={loading} clear={() => { setError(''); setMessage(''); }} />
       <HelpGuidePanel />
       <section className="grid two-columns"><DatabaseSetupCard setup={setup} refreshSetup={refreshSetup} refreshStats={refreshStats} notify={notify} setError={setError} setLoading={setLoading} /><StatsPanel stats={stats} refreshStats={refreshStats} /></section>
+      <DatabaseHealthPanel notify={notify} setError={setError} setLoading={setLoading} />
+      <SystemCapabilitiesPanel setError={setError} />
       <SearchPanel refreshStats={refreshStats} notify={notify} setError={setError} setLoading={setLoading} setEvidencePid={setEvidencePid} />
       <section className="grid two-columns"><AutoPopPanel setup={setup} refreshStats={refreshStats} notify={notify} setError={setError} /><OptionalApiCard setup={setup} refreshSetup={refreshSetup} notify={notify} setError={setError} setLoading={setLoading} /></section>
       <SecurityPanel notify={notify} setError={setError} setLoading={setLoading} />

@@ -7,8 +7,6 @@ services:
       POSTGRES_PASSWORD: ${EOX_POSTGRES_PASSWORD:-eox_password}
       POSTGRES_DB: ${EOX_POSTGRES_DB:-eox_cache}
     ports:
-      # Host 5432 is often already used by a system PostgreSQL install.
-      # The API container still connects internally to postgres:5432.
       - "${EOX_POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
       - eox_postgres_data:/var/lib/postgresql/data
@@ -28,15 +26,19 @@ services:
       EOX_DATA_DIR: /product/data
       EOX_LOG_DIR: /product/logs
       EOX_SECRET_KEY: ${EOX_SECRET_KEY:-}
+      EOX_API_WORKERS: ${EOX_API_WORKERS:-1}
+      EOX_AUTOPOP_EXECUTION_MODE: ${EOX_AUTOPOP_EXECUTION_MODE:-local}
       EOX_AUTH_ENABLED: ${EOX_AUTH_ENABLED:-false}
       EOX_RATE_LIMIT_ENABLED: ${EOX_RATE_LIMIT_ENABLED:-true}
       EOX_RATE_LIMIT_READ_PER_MINUTE: ${EOX_RATE_LIMIT_READ_PER_MINUTE:-240}
       EOX_RATE_LIMIT_WRITE_PER_MINUTE: ${EOX_RATE_LIMIT_WRITE_PER_MINUTE:-60}
       EOX_RATE_LIMIT_AUTOPOP_JOBS_PER_HOUR: ${EOX_RATE_LIMIT_AUTOPOP_JOBS_PER_HOUR:-12}
+      EOX_GRAPHQL_LIMITS_ENABLED: ${EOX_GRAPHQL_LIMITS_ENABLED:-true}
+      EOX_GRAPHQL_MAX_QUERY_CHARS: ${EOX_GRAPHQL_MAX_QUERY_CHARS:-20000}
+      EOX_GRAPHQL_MAX_DEPTH: ${EOX_GRAPHQL_MAX_DEPTH:-10}
       CISCO_CLIENT_ID: ${CISCO_CLIENT_ID:-}
       CISCO_CLIENT_SECRET: ${CISCO_CLIENT_SECRET:-}
       CISCO_ACCESS_TOKEN: ${CISCO_ACCESS_TOKEN:-}
-      # Explicit common origins plus a dev/LAN regex for 5173 and 5174.
       EOX_CORS_ORIGINS: ${EOX_CORS_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174}
       EOX_CORS_ORIGIN_REGEX: ${EOX_CORS_ORIGIN_REGEX:-^https?://([^/:]+)(:5173|:5174)}
     depends_on:
@@ -44,6 +46,29 @@ services:
         condition: service_healthy
     ports:
       - "${EOX_API_HOST_PORT:-8000}:8000"
+    volumes:
+      - ./data:/product/data
+      - ./logs:/product/logs
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: cisco-eox-worker
+    profiles: ["worker"]
+    command: ["python", "/product/tools/autopop_worker.py"]
+    environment:
+      EOX_DATABASE_URL: ${EOX_DATABASE_URL:-postgresql+psycopg://eox_user:eox_password@postgres:5432/eox_cache}
+      EOX_DATA_DIR: /product/data
+      EOX_LOG_DIR: /product/logs
+      EOX_SECRET_KEY: ${EOX_SECRET_KEY:-}
+      EOX_AUTOPOP_WORKER_POLL_SECONDS: ${EOX_AUTOPOP_WORKER_POLL_SECONDS:-5}
+      CISCO_CLIENT_ID: ${CISCO_CLIENT_ID:-}
+      CISCO_CLIENT_SECRET: ${CISCO_CLIENT_SECRET:-}
+      CISCO_ACCESS_TOKEN: ${CISCO_ACCESS_TOKEN:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - ./data:/product/data
       - ./logs:/product/logs
@@ -56,7 +81,6 @@ services:
     depends_on:
       - api
     ports:
-      # Set EOX_FRONTEND_HOST_PORT=5174 in .env if 5173 is already busy.
       - "${EOX_FRONTEND_HOST_PORT:-5173}:5173"
 
 volumes:

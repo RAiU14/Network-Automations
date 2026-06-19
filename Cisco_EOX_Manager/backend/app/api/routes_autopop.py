@@ -5,20 +5,21 @@ from sqlalchemy.orm import Session
 
 from app.db.models import AutoPopJob
 from app.db.session import get_db
-from app.schemas import AutoPopJobListResponse, AutoPopJobOut, AutoPopJobRequest
-from app.services.autopop_jobs import cancel_job, clear_old_jobs, create_job, job_to_out
+from app.schemas import AutoPopJobListResponse, AutoPopJobOut, AutoPopJobRequest, JobActionResponse, JobLogResponse
+from app.services.autopop_jobs import (
+    cancel_job,
+    clear_old_jobs,
+    create_job,
+    job_log_response,
+    job_to_out,
+    pause_job,
+    resume_job,
+)
 
 router = APIRouter(prefix="/autopop", tags=["Auto_Pop Jobs"])
 
 
 def _sanitize_job_parameters(parameters: dict) -> dict:
-    """Accept user-friendly high caps but run with safe backend limits.
-
-    Users often type large values to mean "all discovered categories". FastAPI
-    should not reject that intent with a 422, and weak SQLite servers should not
-    receive 100 parser workers. The actual crawler still stops naturally when
-    Cisco has no more categories/series/announcements.
-    """
     output = dict(parameters)
     notes: list[str] = []
 
@@ -80,9 +81,37 @@ def get_autopop_job(job_id: int, db: Session = Depends(get_db)) -> AutoPopJobOut
     return job_to_out(job)
 
 
+@router.get("/jobs/{job_id}/log", response_model=JobLogResponse)
+def get_autopop_job_log(
+    job_id: int,
+    lines: int = Query(default=200, ge=1, le=1000),
+    db: Session = Depends(get_db),
+) -> JobLogResponse:
+    response = job_log_response(db, job_id, lines=lines)
+    if not response:
+        raise HTTPException(status_code=404, detail="Auto_Pop job not found")
+    return response
+
+
 @router.post("/jobs/{job_id}/cancel", response_model=AutoPopJobOut)
 def cancel_autopop_job(job_id: int, db: Session = Depends(get_db)) -> AutoPopJobOut:
     job = cancel_job(db, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Auto_Pop job not found")
     return job_to_out(job)
+
+
+@router.post("/jobs/{job_id}/pause", response_model=JobActionResponse)
+def pause_autopop_job(job_id: int, db: Session = Depends(get_db)) -> JobActionResponse:
+    job = pause_job(db, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Auto_Pop job not found")
+    return JobActionResponse(ok=True, message=f"Auto_Pop job {job_id} pause requested", job=job_to_out(job))
+
+
+@router.post("/jobs/{job_id}/resume", response_model=JobActionResponse)
+def resume_autopop_job(job_id: int, db: Session = Depends(get_db)) -> JobActionResponse:
+    job = resume_job(db, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Auto_Pop job not found")
+    return JobActionResponse(ok=True, message=f"Auto_Pop job {job_id} resume requested", job=job_to_out(job))

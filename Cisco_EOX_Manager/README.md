@@ -9,6 +9,46 @@ The tool is designed for two audiences:
 
 The database is the source of truth. Auto_Pop saves directly into the configured database. JSON files are not used for seeding or exporting in the GUI.
 
+## Project positioning, data source, and legal note
+
+Cisco EOX Manager is an independent home-lab and internal-operations tool. It is not affiliated with, endorsed by, sponsored by, or supported by Cisco.
+
+This repository is intended to provide a self-hosted API and optional dashboard for lifecycle planning. It does **not** bundle a Cisco EOX dataset. Users generate their own local cache for their own environment and are responsible for following Cisco terms, API terms, website terms, robots.txt, rate limits, and applicable laws.
+
+Preferred data source order:
+
+```text
+1. Local database cache
+2. Cisco official Support EoX API, when credentials are configured
+3. Optional rate-limited public-page fallback for local/internal use
+```
+
+Do not present this project as an official Cisco product, an official Cisco dataset, a Cisco data mirror, or a replacement for Cisco support resources. Cisco product names are used only descriptively. Do not use Cisco logos or branding unless you have permission.
+
+Good public wording:
+
+```text
+Independent home-lab/internal inventory tool for Cisco EoX lifecycle lookups.
+Users generate their own local cache. Not affiliated with Cisco. Use official APIs where available.
+```
+
+Avoid wording like:
+
+```text
+Official Cisco database
+Free Cisco data mirror
+Unlimited Cisco scraper
+Cisco replacement API
+```
+
+Additional notes are in:
+
+```text
+docs/LEGAL_AND_DATA_SOURCE_NOTICE.md
+docs/LINKEDIN_POST_TEMPLATE.md
+```
+
+
 ## Current workflow
 
 ```text
@@ -256,6 +296,79 @@ These remain open for startup and troubleshooting:
 /openapi.json
 ```
 
+
+## Deployment modes
+
+Cisco EOX Manager can be used in three ways. The frontend is optional. The backend is the reusable product.
+
+### 1. Full GUI mode
+
+Run everything:
+
+```bash
+docker compose up -d postgres api frontend
+```
+
+Use this when you want the browser dashboard, setup wizard, Auto_Pop controls, exports, and help pages.
+
+### 2. API-only mode
+
+Run only the API and database:
+
+```bash
+docker compose up -d postgres api
+```
+
+Use this when another application, script, or automation platform will call Cisco EOX Manager over HTTP. The React frontend is not required.
+
+API docs remain available at:
+
+```text
+http://SERVER-IP:8000/docs
+```
+
+Example Python integration:
+
+```python
+import requests
+
+response = requests.post(
+    "http://EOX-SERVER:8000/api/eox/lookup",
+    json={"pids": ["AIR-CT5520-K9"], "refresh": False, "auto_learn": False},
+    headers={"Authorization": "Bearer YOUR_TOKEN"},
+    timeout=30,
+)
+print(response.json())
+```
+
+Recommended architecture for other applications:
+
+```text
+Your application
+   ↓ REST/GraphQL
+Cisco EOX Manager API
+   ↓
+SQLite or PostgreSQL
+```
+
+Avoid having other applications depend directly on the internal tables unless you control both systems. The API is the stable integration boundary.
+
+### 3. Lightweight local mode
+
+Run only the API with SQLite:
+
+```bash
+docker compose up -d api
+```
+
+Use this for small labs, quick checks, or demos. PostgreSQL is recommended for full Auto_Pop datasets.
+
+More details are in:
+
+```text
+docs/API_ONLY_DEPLOYMENT.md
+```
+
 ## Database options
 
 ### SQLite
@@ -464,6 +577,31 @@ DB writes                 single controlled writer
 
 This is safer for Cisco pages and safer for SQLite.
 
+
+### Is it multi-threading or multi-processing?
+
+The current Auto_Pop design uses controlled concurrency, but it is not an unlimited multi-process crawler.
+
+```text
+FastAPI API server       one Uvicorn process by default
+FastAPI sync routes      executed through a threadpool
+Auto_Pop parsing         limited worker threads/process-style worker pool depending on runtime path
+Cisco HTTP requests      intentionally delayed and mostly controlled
+Database writes          controlled writer pattern
+```
+
+This is intentional. Cisco request rate, database writes, and old home-server RAM are usually the bottlenecks. Setting very high worker counts can make the system slower or less stable.
+
+For future larger deployments, the preferred architecture is:
+
+```text
+API container       handles REST/GraphQL requests
+Worker container    runs Auto_Pop jobs
+PostgreSQL          stores data and job state
+Redis/queue         optional distributed rate limit and job queue
+Reverse proxy       TLS and public access control
+```
+
 ## PID lookup flow
 
 When a user searches `AIR-CT5520-K9`:
@@ -599,6 +737,37 @@ pytest -q
 
 The storage-efficiency tests verify that product snapshots do not duplicate raw Cisco tables.
 
+
+## Recommended future hardening
+
+The current product is usable for home-lab and internal testing, but these improvements would make it stronger for broader release:
+
+```text
+API-only Docker profile so users can run api + postgres without frontend
+System capability detection for CPU/RAM/disk and recommended worker values
+Database health page with DB size, table sizes, index sizes, and last update time
+Live Auto_Pop monitor with current category, latest log lines, runtime, and cancel/pause/resume
+Separate Auto_Pop worker container so long crawls cannot block the API process
+Persistent job queue and restart-safe job recovery
+Read-only and admin API tokens instead of one token type
+GraphQL query depth/complexity limits to prevent expensive queries
+Redis-backed rate limiting for multi-container API deployments
+Backup/restore buttons for SQLite and PostgreSQL
+Official Cisco API setup wizard and credential validation
+Crawler policy controls: delay, cooldown, user-agent, retry/backoff, and source attribution
+OpenAPI examples for common integrations
+```
+
+Security hardening for non-home-lab use:
+
+```text
+Use HTTPS through a reverse proxy
+Enable API token protection
+Restrict CORS to known frontend origins
+Do not expose PostgreSQL directly to the internet
+Prefer official APIs and local caching over repeated public-page fetches
+```
+
 ## Known boundaries
 
 ```text
@@ -611,4 +780,226 @@ Always verify lifecycle data with Cisco before business decisions.
 
 ## Disclaimer
 
-This project is not affiliated with or endorsed by Cisco. It uses publicly available Cisco information and optional Cisco API integration. Use at your own risk and validate important lifecycle dates directly with Cisco.
+This project is an independent tool and is not affiliated with, endorsed by, sponsored by, or supported by Cisco. Cisco product names are used only descriptively. This repository does not include a Cisco EOX dataset, and users are expected to generate their own local cache for internal inventory and lifecycle planning.
+
+Use Cisco official APIs where available. Users are responsible for complying with Cisco terms, API terms, website terms, robots.txt, rate limits, and applicable laws. Validate important lifecycle decisions directly with Cisco or your authorized support channel. This project is provided as-is for home-lab, educational, and internal operations use.
+
+## v18 production-hardening additions
+
+This version adds a stronger separation between the GUI, backend API, Auto_Pop worker, and database.
+
+### Deployment modes
+
+#### Full GUI mode
+
+Use this when you want the dashboard plus API:
+
+```bash
+docker compose up -d --build
+```
+
+This starts:
+
+```text
+postgres
+api
+frontend
+```
+
+#### API-only mode
+
+Use this when another application will call Cisco EOX Manager through REST/GraphQL and you do not want to spend resources on the React dashboard:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.api-only.yml up -d --build
+```
+
+This runs PostgreSQL and the FastAPI backend. The frontend service is placed behind a `gui` profile and will not start.
+
+API docs are still available:
+
+```text
+http://SERVER-IP:8000/docs
+```
+
+#### Dedicated Auto_Pop worker mode
+
+For longer or shared deployments, do not make the API process run heavy Auto_Pop jobs. Use a separate worker process:
+
+```bash
+EOX_AUTOPOP_EXECUTION_MODE=external docker compose --profile worker up -d --build
+```
+
+In this mode:
+
+```text
+API container: creates queued Auto_Pop jobs and serves users
+Worker container: picks up queued jobs and runs the crawler/parser
+PostgreSQL: stores the queue and records
+```
+
+This is better for multi-user deployments because long background jobs do not compete as directly with API requests.
+
+### Multi-process API mode
+
+The API can run multiple Uvicorn worker processes:
+
+```text
+EOX_API_WORKERS=2
+```
+
+Then recreate containers:
+
+```bash
+docker compose up -d --build --force-recreate
+```
+
+On old 2-core servers, start with `EOX_API_WORKERS=1` or `2`. More workers are not always faster because each worker has its own memory use and its own in-memory rate limiter.
+
+### System capability detection
+
+The API now exposes:
+
+```text
+GET /api/system/capabilities
+```
+
+It detects:
+
+```text
+CPU logical cores
+available memory
+disk space
+active database type
+recommended Auto_Pop worker profiles
+recommended delay and category break
+```
+
+The GUI uses this to fill safer Auto_Pop defaults for the current machine.
+
+### Database health and metadata
+
+The API now exposes:
+
+```text
+GET /api/system/database-health
+```
+
+It returns:
+
+```text
+database type
+database URL hint
+database size
+last updated time
+table counts
+table sizes
+index sizes
+disk free space
+storage warnings
+```
+
+For SQLite it also reports `.db`, `-wal`, `-shm`, and `-journal` file sizes when present.
+
+### Backups and maintenance
+
+The GUI and API support:
+
+```text
+POST /api/system/backups
+GET  /api/system/backups
+GET  /api/system/backups/{file_name}/download
+POST /api/system/backups/restore
+POST /api/system/maintenance/analyze
+POST /api/system/maintenance/vacuum
+```
+
+SQLite backups are copied safely using SQLite's backup API. PostgreSQL backups use `pg_dump` from inside the API container, so the backend Docker image now includes `postgresql-client`.
+
+Restores are destructive and require explicit confirmation in the API request.
+
+### Live Auto_Pop job monitor
+
+The API now supports:
+
+```text
+GET  /api/autopop/jobs/{job_id}/log
+POST /api/autopop/jobs/{job_id}/pause
+POST /api/autopop/jobs/{job_id}/resume
+POST /api/autopop/jobs/{job_id}/cancel
+```
+
+The log endpoint returns the latest log lines and best-effort progress information such as current category and series. Pause/resume uses POSIX process signals when available, so it is meant for Linux/Docker deployments.
+
+### Read-only token vs admin token
+
+API protection now supports two token roles:
+
+```text
+Admin token:
+  setup, security, backups, maintenance, Auto_Pop control, writes, reads
+
+Read-only token:
+  lookup, stats, evidence, exports, GraphQL read queries, browses
+```
+
+Create tokens in the Security section of the GUI or with API endpoints:
+
+```text
+POST /api/auth/bootstrap      # admin token
+POST /api/auth/read-token     # read-only token
+POST /api/auth/verify         # returns accepted role
+```
+
+Use either token with:
+
+```bash
+curl -H "Authorization: Bearer TOKEN" http://SERVER-IP:8000/api/eox/stats
+```
+
+### GraphQL limits
+
+GraphQL now has guardrails:
+
+```text
+EOX_GRAPHQL_LIMITS_ENABLED=true
+EOX_GRAPHQL_MAX_QUERY_CHARS=20000
+EOX_GRAPHQL_MAX_DEPTH=10
+```
+
+These limits help prevent accidentally huge nested queries from hurting a small server.
+
+### Cisco API and crawler policy
+
+Recommended public posture:
+
+```text
+Use Cisco's official Support EoX API where credentials are available.
+Use public-page fallback only as an optional, rate-limited local-cache mechanism.
+Do not bundle or redistribute a vendor dataset.
+Let users generate their own local cache.
+```
+
+Crawler settings should be conservative by default:
+
+```text
+Delay seconds: 3-5
+Category break: 30-60
+Cooldown enabled
+Force refresh off unless intentionally re-crawling
+```
+
+### What this still does not replace
+
+For a true public multi-tenant service, add these outside Docker Compose:
+
+```text
+TLS reverse proxy
+centralized rate limiting such as nginx/Traefik/Redis
+proper user management
+monitoring and alerting
+regular database backups
+a legal review of data-source behavior
+```
+
+The current design is strong for home labs, internal tooling, and single-organization deployments.

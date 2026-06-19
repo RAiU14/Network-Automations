@@ -13,9 +13,11 @@ from app.api.routes_eox import router as eox_router
 from app.api.routes_export import router as export_router
 from app.api.routes_logs import router as logs_router
 from app.api.routes_setup import router as setup_router
+from app.api.routes_system import router as system_router
 from app.core.auth import AdminAuthMiddleware
 from app.core.config import get_settings
 from app.core.rate_limit import RateLimitMiddleware
+from app.core.graphql_limits import GraphQLLimitMiddleware
 from app.core.logging import RequestLoggingMiddleware, get_logger
 from app.db.session import check_db_connection, init_db
 from app.services.autopop_jobs import mark_stale_jobs
@@ -35,6 +37,7 @@ app = FastAPI(
 )
 
 app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(GraphQLLimitMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(AdminAuthMiddleware)
 app.add_middleware(
@@ -78,6 +81,7 @@ app.include_router(setup_router, prefix=settings.api_prefix)
 app.include_router(eox_router, prefix=settings.api_prefix)
 app.include_router(export_router, prefix=settings.api_prefix)
 app.include_router(logs_router, prefix=settings.api_prefix)
+app.include_router(system_router, prefix=settings.api_prefix)
 
 try:
     from strawberry.fastapi import GraphQLRouter

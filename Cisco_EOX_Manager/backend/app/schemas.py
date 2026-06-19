@@ -318,3 +318,97 @@ class ExportRequest(BaseModel):
     format: Literal["csv", "xlsx"] = "csv"
     search: str | None = None
     limit: int = Field(10000, ge=1, le=100000)
+
+
+class WorkerRecommendation(BaseModel):
+    low: int
+    optimal: int
+    aggressive: int
+    max_allowed: int
+
+
+class SystemCapabilitiesResponse(BaseModel):
+    cpu_logical: int
+    memory_total_gb: float | None = None
+    memory_available_gb: float | None = None
+    disk_total_gb: float | None = None
+    disk_free_gb: float | None = None
+    database_type: str
+    api_workers_configured: int = 1
+    autopop_execution_mode: str = "local"
+    recommended_workers: WorkerRecommendation
+    recommended_delay: float
+    recommended_category_break: float
+    risk_notes: list[str] = Field(default_factory=list)
+
+
+class TableStorageInfo(BaseModel):
+    name: str
+    row_count: int | None = None
+    table_size_mb: float | None = None
+    index_size_mb: float | None = None
+    total_size_mb: float | None = None
+
+
+class DatabaseHealthResponse(BaseModel):
+    database_type: str
+    database_url_hint: str
+    connection_ok: bool
+    connection_error: str | None = None
+    database_size_mb: float | None = None
+    last_updated_at: datetime | None = None
+    table_counts: dict[str, int] = Field(default_factory=dict)
+    table_storage: list[TableStorageInfo] = Field(default_factory=list)
+    sqlite_files: dict[str, float] = Field(default_factory=dict)
+    disk_free_gb: float | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class MaintenanceResponse(BaseModel):
+    ok: bool
+    message: str
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class BackupInfo(BaseModel):
+    file_name: str
+    path: str
+    database_type: str
+    size_mb: float
+    created_at: datetime | None = None
+
+
+class BackupListResponse(BaseModel):
+    items: list[BackupInfo]
+
+
+class BackupCreateRequest(BaseModel):
+    include_timestamp: bool = True
+    note: str | None = None
+
+
+class BackupCreateResponse(BaseModel):
+    ok: bool
+    message: str
+    backup: BackupInfo | None = None
+
+
+class BackupRestoreRequest(BaseModel):
+    file_name: str
+    confirm: bool = False
+
+
+class JobLogResponse(BaseModel):
+    job_id: int
+    status: str | None = None
+    log_file: str | None = None
+    lines: list[str] = Field(default_factory=list)
+    current_category: str | None = None
+    current_series: str | None = None
+    progress: dict[str, Any] = Field(default_factory=dict)
+
+
+class JobActionResponse(BaseModel):
+    ok: bool
+    message: str
+    job: AutoPopJobOut | None = None

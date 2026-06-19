@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
+from app.core.auth import extract_token, token_role
 from app.db.session import get_db
 from app.schemas import (
     AutoPopulateRequest,
@@ -22,13 +23,15 @@ router = APIRouter(prefix="/eox", tags=["EOX"])
 
 
 @router.post("/lookup", response_model=LookupResponse)
-def lookup_eox(request: LookupRequest, db: Session = Depends(get_db)) -> LookupResponse:
+def lookup_eox(request: LookupRequest, http_request: Request, db: Session = Depends(get_db)) -> LookupResponse:
+    role = token_role(extract_token(http_request))
+    read_only = role == "read"
     return EoxOrchestrator(db).lookup_pids(
         request.pids,
         technology=request.technology,
-        refresh=request.refresh,
+        refresh=False if read_only else request.refresh,
         prefer_api=request.prefer_api,
-        auto_learn=request.auto_learn,
+        auto_learn=False if read_only else request.auto_learn,
     )
 
 
